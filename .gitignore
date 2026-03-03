@@ -1,0 +1,99 @@
+# =========================
+# Python Cache & Byte-code
+# =========================
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+*.pyc
+
+# =========================
+# Virtual Environments
+# =========================
+venv/
+.venv/
+env/
+ENV/
+.model_venv/
+*.egg-info/
+.eggs/
+
+# =========================
+# Jupyter Notebook
+# =========================
+.ipynb_checkpoints/
+*.ipynb  # Nếu không muốn commit notebook (hoặc chỉ commit nếu có code quan trọng)
+
+# =========================
+# Logs & Temp files
+# =========================
+logs/
+*.log
+tmp/
+temp/
+*.tmp
+
+# =========================
+# Model & Data Files (Large files - NEVER commit)
+# =========================
+*.h5
+*.pth
+*.ckpt
+*.pt
+*.weights
+*.npz
+*.npy
+*.zip
+*.gz
+*.tar
+*.tar.gz
+*.nii
+*.nii.gz
+*.png
+*.html
+*.pdf
+*.csv
+*.json
+# Thư mục data BraTS cụ thể 
+dataset/
+datasets/
+# =========================
+# Installed Packages
+# Chỉ commit requirements.txt hoặc pyproject.toml/poetry.lock
+# =========================
+torch/
+torchvision/
+torchaudio/
+monai/
+opencv-python/
+pillow/
+scikit-image/
+numpy/
+pandas/
+seaborn/
+matplotlib/
+nilearn/
+nibabel/
+scikit-learn/
+albumentations/
+jupyter/
+tqdm/
+
+# =========================
+# IDE & Editor Files
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# =========================
+# Other common ML ignores
+# =========================
+wandb/          # Nếu dùng Weights & Biases
+outputs/
+runs/
+checkpoints/
+*.csv           # Nếu data CSV lớn
