@@ -1,0 +1,198 @@
+# ============================================================================
+# BRAIN TUMOR ANALYSIS PIPELINE — CONFIGURATION
+# ============================================================================
+pipeline:
+  name:        "Brain Tumor Analysis Framework"
+  version:     "1.1"
+  description: "End-to-end modular pipeline: preprocess → synthesise → segment → 3-D reconstruct"
+
+# ── Paths ────────────────────────────────────────────────────────────────────
+paths:
+  # Model weights  (typo 'segmentaion' corrected to 'segmentation')
+  segmentation_weights: "segmentation-module/model-weight/final_model_unet.pth"
+  synthesis_weights:    "synthesis-module/model-weight/epoch_118.pth"
+
+  # I/O
+  input_data_dir:       "./data/input"
+  output_dir:           "./results"
+  output_segmentation:  "./results/segmentation"
+  output_synthesis:     "./results/synthesis"
+  output_meshes:        "./results/3d_meshes"
+  output_visualization: "./results/visualizations"
+  log_dir:              "./logs"
+
+# ── Preprocessing ─────────────────────────────────────────────────────────
+preprocessing:
+  modalities: ["T1", "T1ce", "T2", "FLAIR"]
+
+  clip:
+    enabled:           true
+    lower_percentile:  0.5
+    upper_percentile:  99.5
+
+  normalization:
+    method: "z_score"       # z_score | min_max
+
+  target_spacing: [1.0, 1.0, 1.0]
+
+  brain_mask:
+    method:   "otsu"        # otsu | template_based
+    apply_to: ["all"]
+
+  max_volume_size: 128      # auto-downsample if any dim exceeds this
+
+# ── Synthesis ────────────────────────────────────────────────────────────────
+synthesis:
+  enabled: true
+
+  trigger:
+    missing_modality_threshold: 1
+
+  model:
+    latent_dim:     128
+    num_timesteps:  1000
+    num_modalities: 4
+    num_domains:    3
+
+  inference:
+    sampling_steps:    50     # DDIM steps
+    eta:               0.0    # 0 = deterministic
+    temperature:       1.0
+    unconditional_prob: 0.0
+
+  validation:
+    check_intensity_range:     true
+    apply_histogram_matching:  true
+    clip_output_percentile:    [0.5, 99.5]
+
+# ── Segmentation ─────────────────────────────────────────────────────────────
+segmentation:
+  model:
+    name:               "UNet3D"
+    num_input_channels: 4
+    num_output_classes: 4
+    # 0=BG  1=NCR (necrotic core)  2=ED (oedema)  3=ET (enhancing tumour)
+
+  inference:
+    batch_size:         1
+    patch_size:         [128, 128, 128]   # sliding-window patch (MONAI)
+    overlap:            0.5
+    use_half_precision: false             # set true only for A100 / large GPU
+
+  post_processing:
+    remove_small_components: true
+    min_component_size:       100         # voxels
+    fill_holes:               false
+
+  output_format:         "nii.gz"
+  save_probability_maps: true
+  save_uncertainty:      false
+
+# ── Tumour region colour/opacity definitions ─────────────────────────────────
+tumor_regions:
+  ET:   { classes: [3],       color: [255,   0,   0], opacity: 0.90 }
+  NCR:  { classes: [1],       color: [255, 230,   0], opacity: 0.80 }
+  ED:   { classes: [2],       color: [  0, 220, 255], opacity: 0.80 }
+  TC:   { classes: [1, 3],    color: [150, 150, 150], opacity: 0.70 }
+  WT:   { classes: [1, 2, 3], color: [  0, 200,   0], opacity: 0.60 }
+
+# ── 3-D Reconstruction ───────────────────────────────────────────────────────
+reconstruction:
+  marching_cubes:
+    level:   0.5
+    spacing: [1.0, 1.0, 1.0]
+
+  smoothing:
+    method:     "laplacian"
+    iterations: 3
+    lambda:     0.5
+
+  decimation:
+    enabled:          true
+    target_reduction: 0.5
+
+  output_formats:       ["obj", "stl"]
+  compute_mesh_metrics: true
+  validate_manifold:    true
+
+# ── Visualisation ────────────────────────────────────────────────────────────
+visualization:
+  viewer:
+    backend:          "plotly"
+    interactive:      true
+    show_axes:        true
+    background_color: [20, 20, 20]
+
+  rendering:
+    resolution:   [1200, 800]
+    dpi:          100
+    antialiasing: true
+
+  multi_region:
+    show_all_regions:   true
+    allow_region_toggle: true
+    show_legend:        true
+
+  slice_views:
+    enabled:         true
+    planes:          ["axial", "sagittal", "coronal"]
+    show_prediction: true
+
+  animation:
+    enabled:         false
+    rotation_steps:  360
+    output_format:   "gif"
+
+# ── Evaluation metrics ───────────────────────────────────────────────────────
+evaluation:
+  dice_score:          true
+  hausdorff_distance:  true
+  surface_dice:        true
+  iou:                 true
+  volume_error:        true
+  triangle_count:      true
+  manifold_check:      true
+  inference_time:      true
+  memory_usage:        true
+  save_detailed_metrics: true
+
+# ── Compute resources ────────────────────────────────────────────────────────
+compute:
+  device:      "cuda"          # cuda | cpu | mps
+  num_workers: 4
+  pin_memory:  true
+
+  memory:
+    reduced_precision:      false
+    gradient_checkpointing: false
+    max_batch_size:         1
+
+  distributed:
+    enabled:  false
+    num_gpus: 1
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+logging:
+  level:          "INFO"
+  save_to_file:   true
+  console_output: true
+  log_inference_time:  true
+  log_memory_stats:    true
+
+# ── Batch processing ─────────────────────────────────────────────────────────
+batch:
+  enabled:                 true
+  process_multiple_patients: true
+  patients_per_batch:      10
+  parallel_synthesis:      true
+  parallel_segmentation:   true
+
+# ── Quality control ──────────────────────────────────────────────────────────
+quality_control:
+  check_input_spacing:      true
+  check_modality_alignment: true
+  check_output_ranges:      true
+  detect_outliers:          true
+  outlier_threshold:        3.0
+  generate_report:          true
+  report_format:            "html"
