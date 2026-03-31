@@ -1410,7 +1410,7 @@
     </mxGraphModel>
   </diagram>
   <diagram name="model blocks (segmentation module)" id="1ss-qCL4LuXl3fBSgyCR">
-    <mxGraphModel dx="4007" dy="2410" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" background="light-dark(#FFFFFF,#FFFFFF)" math="0" shadow="0">
+    <mxGraphModel grid="0" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="1169" pageHeight="827" background="light-dark(#FFFFFF,#FFFFFF)" math="0" shadow="0">
       <root>
         <mxCell id="3P8HG_B0ciyvfvNOIVf6-0" />
         <mxCell id="3P8HG_B0ciyvfvNOIVf6-1" parent="3P8HG_B0ciyvfvNOIVf6-0" />
@@ -1835,7 +1835,7 @@
     </mxGraphModel>
   </diagram>
   <diagram name="model blocks (synthesis module)" id="TQNn4HnxpnZbHb0JxaXK">
-    <mxGraphModel dx="6010" dy="3615" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" background="light-dark(#FFFFFF,#FFFFFF)" math="0" shadow="0">
+    <mxGraphModel grid="0" page="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" pageScale="1" pageWidth="1169" pageHeight="827" background="light-dark(#FFFFFF,#FFFFFF)" math="0" shadow="0">
       <root>
         <mxCell id="PGRoCDRDba_bFrOB9fp4-0" />
         <mxCell id="PGRoCDRDba_bFrOB9fp4-1" parent="PGRoCDRDba_bFrOB9fp4-0" />
