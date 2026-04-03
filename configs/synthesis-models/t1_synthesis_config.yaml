@@ -1,0 +1,24 @@
+# ============================================================================
+# T1 SYNTHESIS CONFIGURATION
+# ============================================================================
+# Task: Generate T1 modality from T1ce, T2, and FLAIR
+
+_parent: "synthesis_base_config.yaml"
+
+synthesis:
+  model:
+    name: "t1_synthesis_diffusion"
+    
+  training:
+    batchsize: 2
+    num_epochs: 5000
+    learning_rate: 1.0e-4
+    
+  data:
+    # Target modality
+    target_modality: "t1"
+    condition_modalities: ["t1ce", "t2", "flair"]
+    
+  checkpoint:
+    save_dir: "./models/t1_synthesis"
+    log_dir: "./logs/t1_synthesis"

@@ -1,50 +1,110 @@
 # Brain Tumor Analysis Pipeline
+**End-to-end MRI analysis framework**: **preprocess → synthesise missing modalities → 3-D segment → visualise**
 
-End-to-end MRI pipeline: **preprocess → synthesise missing modalities → 3-D segment → visualise**.
+## Quick Start
 
-```
-data/CASE123/
-  CASE123_flair.nii.gz
-  CASE123_t1.nii.gz
-  CASE123_t1ce.nii.gz      ← any of these can be missing
-  CASE123_t2.nii.gz
-        │
-        ▼
-  [Preprocessing]   intensity clip (adaptive, 0.5/99.9 pct) + z-score on non-zero voxels + brain mask
-        │
-        ▼
-  [Synthesis]       diffusion model fills missing modalities  (mean-fill fallback)
-        │
-        ▼
-  [Segmentation]    UNet3D  →  0=BG  1=NCR  2=ED  3=ET
-        │
-        ▼
-  [Visualisation]   slice comparison · metrics · region volumes · 3-D mesh (Pred vs GT)
+```bash
+# 1. Setup environment
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1  # Windows
+
+# 2. Install dependencies
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+pip install nibabel scikit-image scipy matplotlib pyyaml tqdm
+pip install -r synthesis-module/requirements.txt
+
+# 3. Run inference pipeline (with all 4 modalities)
+python src/run_pipeline.py \
+  -i results/input/BraTS-GLI-00000-000 \
+  -o results/output/BraTS2021_00000 \
+  -c configs/pipeline_config.yaml
+
+# 4. Visualize results
+python src/visualize/visualize_results.py \
+  -p results/output/BraTS2021_00000
 ```
 
 ---
 
-## Project structure
+## Data Flow
 
 ```
+Input MRI (any 3/4 modalities)
+  ↓
+[PREPROCESSING]
+  • Intensity clip (0.5 / 99.5 percentile)
+  • Z-score normalization (brain region)
+  • Brain mask extraction
+  ↓
+[SYNTHESIS] - Fill missing modalities
+  • Conditional diffusion model (50 DDIM steps)
+  • Modality: T1, T1ce, T2, FLAIR
+  ↓
+[SEGMENTATION] - UNet3D (4 classes)
+  • 0: Background
+  • 1: NCR (Necrotic Core)
+  • 2: ED (Edema)
+  • 3: ET (Enhancing Tumor)
+  ↓
+[VISUALIZATION & REPORT]
+  • Segmentation masks + slices
+  • Region volumes & metrics
+  • 3-D mesh (Pred vs GT)
+  ↓
+Output: {segmentation, synthesis, report, 3d_mesh}
+```
+
+---
+
+## Project Structure
+
+```
+thesis-project/
 ├── configs/
-│   └── pipeline_config.yaml          ← all tunable parameters
-├── segmentation-module/
-│   └── model-weight/
-│       └── final_model_unet.pth
-├── synthesis-module/
-│   ├── model/
-│   │   └── architecture.py
-│   ├── model-weight/
-│   │   └── epoch_118.pth
-│   └── requirements.txt
+│   ├── pipeline_config.yaml           ← Main pipeline config
+│   └── synthesis-models/
+│       ├── t1_synthesis_config.yaml
+│       ├── t1ce_synthesis_config.yaml
+│       ├── t2_synthesis_config.yaml
+│       └── flair_synthesis_config.yaml
+├── models/
+│   ├── diffusion-for-mri-tumor-brain-creation/
+│   │   ├── train_brats.py             ← Training entry point
+│   │   ├── inference_all_modalities.py
+│   │   ├── dataset_brats.py
+│   │   ├── scripts/
+│   │   │   └── train_all_modalities.sh ← Train 4 models
+│   │   ├── diffusion_model/
+│   │   │   ├── unet_brats.py
+│   │   │   └── trainer_brats.py
+│   │   ├── fast_sampling/
+│   │   │   ├── inference_ddpm.py
+│   │   │   └── inference_deis.py
+│   │   └── utils/
+│   ├── segmentation-module/
+│   │   └── model-weight/
+│   │       └── final_model_unet.pth
+│   └── synthesis-module/
+│       ├── main.py
+│       ├── train.py
+│       ├── model/
+│       │   └── architecture.py
+│       ├── model-weight/
+│       │   └── epoch_118.pth
+│       └── requirements.txt
 ├── src/
+│   ├── run_pipeline.py                ← Main inference CLI
+│   ├── preprocessing.py               ← Preprocessing utilities
+│   ├── web_api.py
 │   ├── models/
-│   │   └── unet3d.py                 ← UNet3D + UNET_Curriculum
-│   └── preprocessing.py              ← intensity normalisation, brain mask, stacking
-├── output/                           ← auto-created at runtime
-├── run_pipeline.py                   ← inference CLI entry-point
-├── visualize.py                      ← visualisation CLI entry-point
+│   │   └── unet3d.py                  ← UNet3D + curriculum learning
+│   └── visualize/
+│       └── visualize_results.py
+├── notebooks/
+│   └── integrated_pipeline.ipynb
+├── results/
+│   ├── input/                         ← Input NIFTI files
+│   └── output/                        ← Predictions & outputs
 └── README.md
 ```
 
@@ -52,52 +112,222 @@ data/CASE123/
 
 ## Installation
 
-> Tested on Python 3.9 – 3.11.  GPU recommended but not required.
+**Requirements**: Python 3.9–3.11, GPU (CUDA 11.8+) recommended
 
-### 1. Create and activate a virtual environment
+### Setup Steps
 
+#### 1. Create Virtual Environment
 ```bash
-# Linux / macOS
 python -m venv .venv
-source .venv/bin/activate
 
 # Windows (PowerShell)
-python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+
+# Linux / macOS
+source .venv/bin/activate
 ```
 
-### 2. Install PyTorch
-
-Choose the command for your hardware from https://pytorch.org/get-started/locally/
-
+#### 2. Install PyTorch (choose one)
 ```bash
-# CUDA 11.8  (recommended for GPU)
+# GPU (CUDA 11.8) — recommended
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 
-# CUDA 12.1
+# GPU (CUDA 12.1)
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 
 # CPU only
 pip install torch torchvision
 ```
 
-### 3. Install remaining dependencies
-
+#### 3. Install Core Dependencies
 ```bash
-pip install nibabel scikit-image scipy matplotlib pyyaml
+pip install -q \
+  nibabel scikit-image scipy matplotlib pyyaml \
+  tqdm numpy pandas einops tensorboard
+```
+
+#### 4. Install Module Dependencies
+```bash
 pip install -r synthesis-module/requirements.txt
 ```
 
-### 4. Optional — recommended for best results
-
+#### 5. Optional Packages (Recommended)
 | Package | Purpose | Install |
-|---|---|---|
-| `monai` | Sliding-window inference on large volumes | `pip install monai` |
-| `plotly` | Interactive 3-D HTML mesh viewer | `pip install plotly` |
-| `trimesh` | Laplacian mesh smoothing | `pip install trimesh` |
+|---------|---------|---------|
+| MONAI | Sliding-window inference (handles large volumes) | `pip install monai` |
+| Plotly | Interactive 3-D mesh visualization | `pip install plotly` |
+| Trimesh | Mesh smoothing & processing | `pip install trimesh` |
+| TorchIO | Medical image augmentation | `pip install torchio` |
 
-> Without MONAI the model runs a single forward pass on the whole volume.
-> For volumes larger than ~128³ this may cause OOM — install MONAI and use `--roi`.
+> ⚠️ **Note**: Without MONAI, inference runs single forward pass. For volumes >128³, install MONAI to avoid OOM.
+
+---
+
+## Training Diffusion Synthesis Models
+
+The `diffusion-for-mri-tumor-brain-creation` module contains training scripts for generating missing MRI modalities.
+
+### Training Setup
+
+```bash
+cd models/diffusion-for-mri-tumor-brain-creation
+
+# Install training dependencies
+pip install -r requirements.txt
+
+# (Optional) Prepare BraTS dataset
+python prepare_brats_dataset.py --source /path/to/BRATS2021
+python preprocess_brats_data.py --data_root dataset
+```
+
+### Train All 4 Modality Synthesis Models
+
+The script trains 4 independent models, each learning to generate one missing modality from 3 available:
+
+```bash
+bash scripts/train_all_modalities.sh \
+  [EPOCHS=5000] \
+  [BATCH_SIZE=2] \
+  [INPUT_SIZE=64] \
+  [DEPTH_SIZE=144] \
+  [TIMESTEPS=250] \
+  [SAVE_EVERY=200] \
+  [GPU_ID=0] \
+  [DATA_ROOT=dataset] \
+  [SPLIT_JSON=splits/brats_split_8_1_1.json] \
+  [TRAIN_LR=1e-4]
+```
+
+**What it trains**:
+1. `T1ce, T2, FLAIR → T1`
+2. `T1, T2, FLAIR → T1ce`
+3. `T1, T1ce, FLAIR → T2`
+4. `T1, T1ce, T2 → FLAIR`
+
+**Output**: 4 model files saved in `models/`
+
+### Train Single Modality Model
+
+```bash
+python train_brats.py \
+  --task 3to1 \
+  --data_root dataset \
+  --cond_modalities "t1ce,t2,flair" \
+  --target_modality "t1" \
+  --input_size 64 \
+  --depth_size 144 \
+  --batchsize 2 \
+  --epochs 5000 \
+  --timesteps 250 \
+  --save_and_sample_every 200 \
+  --train_lr 1e-4 \
+  --split_json splits/brats_split_8_1_1.json \
+  --with_condition
+```
+
+### Training Configuration
+
+All model hyperparameters are defined in YAML config files under `configs/synthesis-models/`:
+
+```yaml
+model:
+  name: "diffusion_synthesis"
+  latent_dim: 128
+  num_timesteps: 1000
+  num_modalities: 4
+  num_domains: 3
+  num_channels: 64
+  num_res_blocks: 2
+
+training:
+  optimizer: "adamw"
+  learning_rate: 1e-4
+  batchsize: 2
+  epochs: 5000
+  timesteps: 250
+  save_every: 200
+  
+data:
+  input_size: 64
+  depth_size: 144
+  modalities: ["t1", "t1ce", "t2", "flair"]
+  split_seed: 42
+```
+
+### Resuming Training
+
+```bash
+python train_brats.py \
+  --task 3to1 \
+  --data_root dataset \
+  --cond_modalities "t1ce,t2,flair" \
+  --target_modality "t1" \
+  --epochs 5000 \
+  --resume_weight "models/model_t1_from_t1ce_t2_flair.pt"
+```
+
+### Inference with Trained Models
+
+After training, use the generated models in the main pipeline:
+
+```bash
+python src/run_pipeline.py \
+  -i results/input/BraTS-GLI-00000-000 \
+  -o results/output/BraTS2021_00000 \
+  --syn-w models/diffusion-for-mri-tumor-brain-creation/models/model_t1_from_t1ce_t2_flair.pt
+```
+
+Or update the config:
+
+```yaml
+synthesis:
+  weights:
+    t1: "models/diffusion-for-mri-tumor-brain-creation/models/model_t1_from_t1ce_t2_flair.pt"
+    t1ce: "models/diffusion-for-mri-tumor-brain-creation/models/model_t1ce_from_t1_t2_flair.pt"
+    t2: "models/diffusion-for-mri-tumor-brain-creation/models/model_t2_from_t1_t1ce_flair.pt"
+    flair: "models/diffusion-for-mri-tumor-brain-creation/models/model_flair_from_t1_t1ce_t2.pt"
+```
+
+---
+
+## Synthesis Pipeline Overview
+
+The synthesis module generates missing MRI modalities using **conditional diffusion models**:
+
+```
+Missing Modality + 3 Available Modalities
+  ↓
+Diffusion Model (Reverse Diffusion Process)
+  ↓
+Synthesized 4-Modality Volume
+```
+
+### Key Components
+
+- **Forward Diffusion**: Gradually add noise to target modality (training)
+- **Reverse Diffusion**: Denoise with conditioning on available modalities (inference)
+- **Conditioning**: Concatenate 3 available modalities as network input
+- **Sampling**: DDIM (50 steps) or DDPM (250 steps) at inference
+
+### Configuration
+
+| Parameter | Default | Description |
+|---|---|---|
+| `sampling_steps` | 50 | DDIM steps (lower = faster, less quality) |
+| `eta` | 0.0 | Determinism: 0=deterministic, 1=stochastic |
+| `temperature` | 1.0 | Sampling temperature |
+| `unconditional_prob` | 0.0 | Dropout probability for conditioning |
+
+Adjust in `configs/pipeline_config.yaml`:
+
+```yaml
+synthesis:
+  inference:
+    sampling_steps: 50      # 20-250, trade speed vs quality
+    eta: 0.0                # 0, 0.5, 1.0
+    temperature: 1.0
+    unconditional_prob: 0.1 # Enable dropout for robustness
+```
 
 ---
 

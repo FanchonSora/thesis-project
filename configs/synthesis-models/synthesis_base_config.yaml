@@ -1,0 +1,178 @@
+# ============================================================================
+# SYNTHESIS BASE CONFIGURATION — Conditional Diffusion Models
+# ============================================================================
+# This is the base configuration template for all synthesis models
+# Copy and modify for specific modality synthesis tasks
+
+synthesis:
+  # ────────────────────────────────────────────────────────────────────
+  # Model Architecture
+  # ────────────────────────────────────────────────────────────────────
+  model:
+    name: "diffusion_synthesis"
+    type: "conditional_3d_diffusion"
+    
+    # Network configuration
+    latent_dim: 128                # Latent dimension
+    num_timesteps: 1000            # Total diffusion steps
+    num_modalities: 4              # Input modalities (T1, T1ce, T2, FLAIR)
+    num_domains: 3                 # Input domains (3 conditional + 1 target)
+    num_channels: 64               # Base channel count
+    num_res_blocks: 2              # Residual blocks per resolution level
+    
+    # Activation & normalization
+    activation: "silu"             # SiLU or ReLU
+    normalization: "group_norm"    # group_norm or instance_norm
+    attention_levels: [2, 3, 4]    # Resolution levels with self-attention
+
+  # ────────────────────────────────────────────────────────────────────
+  # Training Configuration
+  # ────────────────────────────────────────────────────────────────────
+  training:
+    # Optimizer
+    optimizer: "adamw"
+    learning_rate: 1.0e-4
+    weight_decay: 1.0e-5
+    beta1: 0.9
+    beta2: 0.999
+    
+    # Learning rate schedule
+    lr_scheduler: "cosine"         # cosine | linear | const
+    warmup_epochs: 100
+    
+    # Training loop
+    batchsize: 2
+    num_epochs: 5000
+    accumulation_steps: 1
+    
+    # Mixed precision
+    use_amp: true                  # Automatic Mixed Precision
+    amp_dtype: "float16"           # float16 or bfloat16
+    
+    # EMA (Exponential Moving Average)
+    ema_decay: 0.9999
+    ema_update_every: 10
+    
+    # Early stopping
+    early_stopping_patience: null  # null = disabled
+    early_stopping_metric: "loss"
+
+  # ────────────────────────────────────────────────────────────────────
+  # Diffusion Process Configuration
+  # ────────────────────────────────────────────────────────────────────
+  diffusion:
+    # Noise schedule
+    schedule_type: "linear"        # linear | cosine | sqrt
+    beta_start: 0.0001
+    beta_end: 0.02
+    
+    # Loss function
+    loss_type: "mse"               # mse | mae | huber
+    
+    # Prediction type
+    prediction_type: "epsilon"     # epsilon | x_0 | v_prediction
+    
+    # Variance schedule
+    variance_schedule: "fixed"     # fixed | learned | learned_range
+    
+  # ────────────────────────────────────────────────────────────────────
+  # Data Configuration
+  # ────────────────────────────────────────────────────────────────────
+  data:
+    # Input dimensions
+    input_size: 64                 # XY patch size
+    depth_size: 144                # Z dimension (full volume or patch)
+    
+    # Modalities
+    modalities: ["t1", "t1ce", "t2", "flair"]
+    modality_order: ["t1", "t1ce", "t2", "flair"]  # Always this order
+    
+    # Preprocessing
+    normalize: true
+    normalization_method: "z_score"
+    clip_percentile: [0.5, 99.5]
+    
+    # Data split
+    train_split: 0.8
+    val_split: 0.1
+    test_split: 0.1
+    split_seed: 42
+    
+    # Augmentation (training only)
+    augmentation:
+      enabled: true
+      random_flip: true
+      random_rotation: 20          # degrees
+      random_scale: 0.1
+      random_elastic_deform: true
+      
+  # ────────────────────────────────────────────────────────────────────
+  # Inference Configuration
+  # ────────────────────────────────────────────────────────────────────
+  inference:
+    # Sampling strategy
+    sampling_method: "ddim"        # ddim | ddpm | deis
+    sampling_steps: 50             # 20-250, trade-off: speed vs quality
+    eta: 0.0                       # 0.0=deterministic, 1.0=stochastic
+    temperature: 1.0
+    
+    # Conditioning
+    unconditional_prob: 0.0        # Dropout for robustness (0.0-0.3)
+    conditioning_method: "concat"  # concat | cross_attention | adaptive_norm
+    
+    # Output post-processing
+    clip_output: true
+    clip_percentile: [0.5, 99.5]
+    intensity_matching: true       # Match input intensity distribution
+    
+  # ────────────────────────────────────────────────────────────────────
+  # Validation & Metrics
+  # ────────────────────────────────────────────────────────────────────
+  validation:
+    # Compute metrics every N steps
+    validate_every: 500
+    
+    # Metrics
+    compute_metrics: true
+    metrics:
+      - "mse"
+      - "mae"
+      - "psnr"
+      - "ssim"
+      - "fid"                      # Fréchet Inception Distance
+    
+    # Checkpointing
+    save_best_only: true
+    save_metric: "ssim"            # highest = best
+    
+  # ────────────────────────────────────────────────────────────────────
+  # Checkpointing & Logging
+  # ────────────────────────────────────────────────────────────────────
+  checkpoint:
+    # Save frequency
+    save_every: 200                # Steps
+    save_dir: "./checkpoints"
+    keep_last_n: 5                 # Keep only last N checkpoints
+    
+    # Logging
+    log_dir: "./logs"
+    log_every: 50                  # Iterations
+    tensorboard: true
+    wandb: false                   # Weights & Biases
+    
+  # ────────────────────────────────────────────────────────────────────
+  # Hardware Configuration
+  # ────────────────────────────────────────────────────────────────────
+  hardware:
+    device: "cuda"                 # cuda | cpu | mps
+    num_workers: 4                 # DataLoader workers
+    pin_memory: true
+    use_distributed: false
+    
+  # ────────────────────────────────────────────────────────────────────
+  # Debug & Development
+  # ────────────────────────────────────────────────────────────────────
+  debug:
+    verbose: true
+    visualize_batches: false       # Tensorboard visualization
+    profile: false                 # Profiling

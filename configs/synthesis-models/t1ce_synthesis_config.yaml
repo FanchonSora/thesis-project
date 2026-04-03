@@ -1,0 +1,24 @@
+# ============================================================================
+# T1CE SYNTHESIS CONFIGURATION
+# ============================================================================
+# Task: Generate T1ce (Gadolinium-enhanced) modality from T1, T2, and FLAIR
+
+_parent: "synthesis_base_config.yaml"
+
+synthesis:
+  model:
+    name: "t1ce_synthesis_diffusion"
+    
+  training:
+    batchsize: 2
+    num_epochs: 5000
+    learning_rate: 1.0e-4
+    
+  data:
+    # Target modality
+    target_modality: "t1ce"
+    condition_modalities: ["t1", "t2", "flair"]
+    
+  checkpoint:
+    save_dir: "./models/t1ce_synthesis"
+    log_dir: "./logs/t1ce_synthesis"

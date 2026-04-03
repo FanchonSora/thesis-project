@@ -3,9 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Building blocks
-# ─────────────────────────────────────────────────────────────────────────────
 class ResidualSEBlock3D(nn.Module):
     def __init__(self, in_channels, out_channels, dropout_rate=0.1):
         super().__init__()
