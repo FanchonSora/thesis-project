@@ -1,7 +1,3 @@
-/**
- * Brain Tumor Analysis Platform - Main Application
- */
-
 class BrainAnalysisApp {
     constructor() {
         this.uploadedFiles = {};
@@ -11,8 +7,14 @@ class BrainAnalysisApp {
         this.renderer = null;
         this.controls = null;
         this.mesh = null;
+        this.regionGroup = null;
         this.statusStartTime = null;
         this.pollTimer = null;
+        this.reportData = null;
+        this.animationFrameId = null;
+        this.resizeHandler = null;
+        this.currentMeshLod = 'low';
+        this.threeLoaded = false;
         this.init();
     }
 
@@ -23,173 +25,224 @@ class BrainAnalysisApp {
     init() {
         this.setupEventListeners();
         this.handleDragDrop();
+        this.ensureOptionalUI();
+        this.ensureThreeJSLoaded();
     }
 
-    setupEventListeners() {
-        // Case ID input
-        document.getElementById('caseId').addEventListener('change', () => {
-            this.updateSubmitButtonState();
-        });
+    ensureThreeJSLoaded() {
+        // Check if THREE is already loaded
+        if (window.THREE) {
+            this.threeLoaded = true;
+            return Promise.resolve();
+        }
 
-        // File upload
+        // Load THREE.js from CDN as fallback
+        return this.loadThreeJSFromCDN();
+    }
+    loadThreeJSFromCDN() {
+        return new Promise((resolve) => {
+            const script = document.createElement('script');
+            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+            script.onload = () => {
+                console.log('THREE.js loaded from CDN');
+
+                const orbitScript = document.createElement('script');
+                orbitScript.src = 'https://cdn.jsdelivr.net/npm/three@r128/examples/js/controls/OrbitControls.js';
+                orbitScript.onload = () => {
+                    console.log('OrbitControls loaded from CDN');
+
+                    const objLoaderScript = document.createElement('script');
+                    objLoaderScript.src = 'https://cdn.jsdelivr.net/npm/three@r128/examples/js/loaders/OBJLoader.js';
+                    objLoaderScript.onload = () => {
+                        console.log('OBJLoader loaded from CDN');
+                        this.threeLoaded = true;
+                        resolve();
+                    };
+                    objLoaderScript.onerror = () => {
+                        console.warn('Failed to load OBJLoader from CDN');
+                        resolve();
+                    };
+                    document.head.appendChild(objLoaderScript);
+                };
+                orbitScript.onerror = () => {
+                    console.warn('Failed to load OrbitControls from CDN');
+                    resolve();
+                };
+                document.head.appendChild(orbitScript);
+            };
+            script.onerror = () => {
+                console.warn('Failed to load THREE.js from CDN, will use fallback visualization');
+                resolve();
+            };
+            document.head.appendChild(script);
+        });
+    }
+    ensureOptionalUI() {
+        const meshLod = document.getElementById('meshLod');
+        if (meshLod && !meshLod.dataset.bound) {
+            meshLod.dataset.bound = 'true';
+            meshLod.addEventListener('change', (e) => {
+                this.currentMeshLod = e.target.value;
+                this.reloadMeshForSelectedLod();
+            });
+        }
+    }
+    setupEventListeners() {
+        const caseIdEl = document.getElementById('caseId');
+        if (caseIdEl) {
+            caseIdEl.addEventListener('keyup', () => this.updateSubmitButtonState());
+        }
         document.querySelectorAll('.file-input').forEach(input => {
             input.addEventListener('change', (e) => this.handleFileSelect(e));
         });
-
-        // Drop zones
         document.querySelectorAll('.drop-zone').forEach(zone => {
-            zone.addEventListener('click', (e) => {
-                const modality = e.currentTarget.getAttribute('data-modality');
-                const input = document.querySelector(`input[data-modality="${modality}"]`);
-                input.click();
+            zone.addEventListener('click', () => {
+                const modality = zone.getAttribute('data-modality');
+                const input = document.querySelector(`.file-input[data-modality="${modality}"]`);
+                if (input) input.click();
             });
         });
-
-        // Buttons
-        document.getElementById('submitBtn').addEventListener('click', () => this.submitAnalysis());
-        document.getElementById('clearBtn').addEventListener('click', () => this.clearAll());
-
-        // Report tabs
+        const submitBtn = document.getElementById('submitBtn');
+        if (submitBtn) {
+            submitBtn.addEventListener('click', () => this.submitAnalysis());
+        }
+        const clearBtn = document.getElementById('clearBtn');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => this.clearAll());
+        }
         document.querySelectorAll('.report-tab').forEach(tab => {
-            tab.addEventListener('click', (e) => this.switchTab(e.target.getAttribute('data-tab')));
+            tab.addEventListener('click', () => this.switchTab(tab.dataset.tab));
         });
-
-        // Viewer controls
-        document.getElementById('controlReset').addEventListener('click', () => this.resetView());
-        document.getElementById('controlDownload').addEventListener('click', () => this.downloadMesh());
-
-        // Download buttons
-        document.getElementById('downloadReport').addEventListener('click', () => {
-            this.downloadFile('report');
-        });
-        document.getElementById('downloadPrediction').addEventListener('click', () => {
-            this.downloadFile('pred_post');
-        });
-        document.getElementById('downloadMesh').addEventListener('click', () => {
-            this.downloadFile('mesh');
-        });
+        const controlReset = document.getElementById('controlReset');
+        if (controlReset) {
+            controlReset.addEventListener('click', () => this.resetView());
+        }
+        const controlCenter = document.getElementById('controlCenter');
+        if (controlCenter) {
+            controlCenter.addEventListener('click', () => this.fitCameraToObject(this.mesh));
+        }
+        const controlDownload = document.getElementById('controlDownload');
+        if (controlDownload) {
+            controlDownload.addEventListener('click', () => this.downloadMesh());
+        }
+        const downloadReport = document.getElementById('downloadReport');
+        if (downloadReport) {
+            downloadReport.addEventListener('click', () => this.downloadFile('report'));
+        }
+        const downloadPrediction = document.getElementById('downloadPrediction');
+        if (downloadPrediction) {
+            downloadPrediction.addEventListener('click', () => this.downloadFile('pred_post'));
+        }
+        const downloadMesh = document.getElementById('downloadMesh');
+        if (downloadMesh) {
+            downloadMesh.addEventListener('click', () => this.downloadFile('mesh'));
+        }
     }
-
     handleDragDrop() {
         document.querySelectorAll('.drop-zone').forEach(zone => {
             zone.addEventListener('dragover', (e) => {
                 e.preventDefault();
-                e.stopPropagation();
-                zone.classList.add('dragover');
+                zone.classList.add('drag-over');
             });
-
-            zone.addEventListener('dragleave', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                zone.classList.remove('dragover');
+            zone.addEventListener('dragleave', () => {
+                zone.classList.remove('drag-over');
             });
-
             zone.addEventListener('drop', (e) => {
                 e.preventDefault();
-                e.stopPropagation();
-                zone.classList.remove('dragover');
-                
+                zone.classList.remove('drag-over');
                 const modality = zone.getAttribute('data-modality');
-                const files = e.dataTransfer.files;
-                
-                if (files.length > 0) {
-                    const input = document.querySelector(`input[data-modality="${modality}"]`);
-                    input.files = files;
+                const input = document.querySelector(`.file-input[data-modality="${modality}"]`);
+                if (input && e.dataTransfer.files.length > 0) {
+                    input.files = e.dataTransfer.files;
                     this.handleFileSelect({ target: input });
                 }
             });
         });
     }
-
     stopPolling() {
         if (this.pollTimer) {
             clearTimeout(this.pollTimer);
             this.pollTimer = null;
         }
     }
-
-    /* =====================================
-       FILE HANDLING
-       ===================================== */
-
     handleFileSelect(event) {
         const input = event.target;
         const modality = input.getAttribute('data-modality');
         const file = input.files[0];
-
         if (!file) return;
-
-        // Validate file
         if (!file.name.endsWith('.nii') && !file.name.endsWith('.nii.gz')) {
-            this.showToast('Invalid file format. Please upload .nii or .nii.gz files.', 'error');
+            this.showToast(`Invalid file format. Please upload .nii or .nii.gz files`, 'error');
             return;
         }
-
-        const maxSize = 500 * 1024 * 1024; // 500MB
+        const maxSize = 500 * 1024 * 1024;
         if (file.size > maxSize) {
-            this.showToast(`File too large. Maximum size is 500MB.`, 'error');
+            this.showToast(`File size exceeds 500MB limit`, 'error');
             return;
         }
-
-        // Store file
         this.uploadedFiles[modality] = {
             file: file,
             name: file.name,
             size: file.size
         };
-
-        // Update UI
         this.updateModality(modality);
         this.updateSubmitButtonState();
         this.showToast(`${modality.toUpperCase()} uploaded successfully`, 'success');
     }
-
     updateModality(modality) {
-        const card = document.querySelector(`[data-modality="${modality}"]`);
+        const card = document.querySelector(`.modality-card[data-modality="${modality}"]`);
+        if (!card) return;
         const dropZone = card.querySelector('.drop-zone');
         const fileInfo = card.querySelector('.file-info');
         const file = this.uploadedFiles[modality];
-
+        if (!file) return;
         card.classList.add('active');
-        dropZone.style.display = 'none';
-        fileInfo.style.display = 'block';
-
-        const sizeStr = this.formatBytes(file.size);
-        fileInfo.innerHTML = `
-            <small class="file-name">${file.name}</small>
-            <small class="file-size">${sizeStr}</small>
-        `;
+        if (dropZone) dropZone.style.display = 'none';
+        if (fileInfo) {
+            fileInfo.style.display = 'block';
+            const nameEl = fileInfo.querySelector('.file-name');
+            const sizeEl = fileInfo.querySelector('.file-size');
+            if (nameEl) nameEl.textContent = file.name;
+            if (sizeEl) sizeEl.textContent = `${this.formatBytes(file.size)}`;
+        }
     }
-
     clearAll() {
         this.stopPolling();
         this.currentJobId = null;
-
+        this.reportData = null;
         const resultsContainer = document.getElementById('resultsContainer');
         const emptyState = document.getElementById('emptyState');
         const statusCard = document.getElementById('statusCard');
-
         this.uploadedFiles = {};
-
         document.querySelectorAll('.modality-card').forEach(card => {
-            const modality = card.getAttribute('data-modality');
-            const input = document.querySelector(`input[data-modality="${modality}"]`);
+            card.classList.remove('active');
             const dropZone = card.querySelector('.drop-zone');
             const fileInfo = card.querySelector('.file-info');
-
-            input.value = '';
-            card.classList.remove('active');
-            dropZone.style.display = 'flex';
-            fileInfo.style.display = 'none';
+            const status = card.querySelector('.modality-status');
+            if (dropZone) dropZone.style.display = 'flex';
+            if (fileInfo) fileInfo.style.display = 'none';
+            if (status) status.textContent = '○';
         });
-
-        document.getElementById('caseId').value = '';
-        resultsContainer.style.display = 'none';
-        statusCard.style.display = 'none';
-        emptyState.style.display = 'flex';
-
+        const caseIdEl = document.getElementById('caseId');
+        if (caseIdEl) caseIdEl.value = '';
+        if (resultsContainer) resultsContainer.style.display = 'none';
+        if (statusCard) statusCard.style.display = 'none';
+        if (emptyState) emptyState.style.display = 'block';
+        this.clearPreviewImages();
+        this.destroy3DViewer();
+        this.clearTabContents();
         this.updateSubmitButtonState();
         this.showToast('All uploads cleared', 'success');
+    }
+
+    clearTabContents() {
+        const detailsContent = document.getElementById('detailsContent');
+        if (detailsContent) detailsContent.innerHTML = '';
+
+        const volumesChart = document.getElementById('volumesChart');
+        if (volumesChart) volumesChart.innerHTML = '';
+
+        const previewContent = document.getElementById('previewContent');
+        if (previewContent) previewContent.innerHTML = '';
     }
 
     /* =====================================
@@ -197,32 +250,49 @@ class BrainAnalysisApp {
        ===================================== */
 
     updateSubmitButtonState() {
-        const caseId = document.getElementById('caseId').value.trim();
+        const caseId = (document.getElementById('caseId')?.value || '').trim();
         const fileCount = Object.keys(this.uploadedFiles).length;
         const submitBtn = document.getElementById('submitBtn');
-        
-        const isValid = caseId && fileCount >= 3;
+
+        if (!submitBtn) return;
+
+        const isValid = !!caseId && fileCount >= 3;
         submitBtn.disabled = !isValid;
     }
 
     async submitAnalysis() {
-        const caseId = document.getElementById('caseId').value.trim();
+        const caseId = (document.getElementById('caseId')?.value || '').trim();
         const fileCount = Object.keys(this.uploadedFiles).length;
 
         if (!caseId || fileCount < 3) {
-            this.showToast('Please enter case ID and upload at least 3 modalities', 'error');
+            this.showToast('Please enter Case ID and upload at least 3 modalities', 'error');
             return;
         }
-
-        // Stop old polling before creating a new job
         this.stopPolling();
         this.currentJobId = null;
-
+        this.reportData = null;
+        this.clearPreviewImages();
+        this.destroy3DViewer();
         const formData = new FormData();
         formData.append('case_id', caseId);
 
         for (const [modality, fileObj] of Object.entries(this.uploadedFiles)) {
             formData.append(modality, fileObj.file);
+        }
+
+        const enableSynthesis = document.getElementById('enableSynthesis');
+        if (enableSynthesis) {
+            formData.append('enable_synthesis', enableSynthesis.checked);
+        }
+
+        const generateMesh = document.getElementById('generateMesh');
+        if (generateMesh) {
+            formData.append('generate_mesh', generateMesh.checked);
+        }
+
+        const synSteps = document.getElementById('synSteps');
+        if (synSteps && synSteps.value) {
+            formData.append('syn_steps', parseInt(synSteps.value));
         }
 
         this.showStatusCard();
@@ -233,25 +303,21 @@ class BrainAnalysisApp {
                 method: 'POST',
                 body: formData
             });
-            const raw = await response.text();
-            let data = {};
-            try {
-                data = raw ? JSON.parse(raw) : {};
-            } catch {
-                throw new Error('Invalid response from /jobs');
-            }
+
             if (!response.ok) {
-                this.showToast(data.detail || 'Failed to submit analysis', 'error');
-                this.updateStatus(data.detail || 'Failed to submit analysis', 'failed');
+                const err = await response.json();
+                this.showToast(`Submission failed: ${err.detail || 'Unknown error'}`, 'error');
                 return;
             }
 
+            const data = await response.json();
             this.currentJobId = data.job_id;
-            this.updateStatus('Job submitted. Waiting to start...', 'queued');
+            this.updateStatus('Job submitted. Processing...', 'queued');
             this.pollJobStatus();
         } catch (error) {
-            this.showToast(`Error: ${error.message}`, 'error');
-            this.updateStatus(`Error: ${error.message}`, 'failed');
+            this.showToast(`Network error: ${error.message}`, 'error');
+            const statusCard = document.getElementById('statusCard');
+            if (statusCard) statusCard.style.display = 'none';
         }
     }
 
@@ -261,86 +327,41 @@ class BrainAnalysisApp {
         const jobIdAtRequestTime = this.currentJobId;
 
         try {
-            const response = await fetch(`/jobs/${jobIdAtRequestTime}/status`, {
-                cache: 'no-store',
-                headers: {
-                    'Accept': 'application/json'
-                }
+            const response = await fetch(`/jobs/${this.currentJobId}/status`, {
+                cache: 'no-store'
             });
 
-            if (response.status === 404) {
-                if (this.currentJobId === jobIdAtRequestTime) {
-                    this.stopPolling();
-                    this.currentJobId = null;
-                    this.updateStatus('Job not found. Server may have restarted. Please run again.', 'failed');
-                    this.showToast('Job not found. Server may have restarted.', 'error');
-                }
-                return;
-            }
-
-            const raw = await response.text();
-
             if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${raw || 'Unknown server error'}`);
-            }
-
-            if (!raw || !raw.trim()) {
-                throw new Error('Empty status response');
-            }
-
-            let job;
-            try {
-                job = JSON.parse(raw);
-            } catch (e) {
-                console.error('Invalid status JSON:', raw);
-                throw new Error(`Invalid JSON from status endpoint: ${e.message}`);
-            }
-
-            if (!job || typeof job !== 'object') {
-                throw new Error('Invalid job payload');
-            }
-
-            if (this.currentJobId !== jobIdAtRequestTime) return;
-
-            const status = job.status || 'queued';
-            this.updateStatus(`Status: ${status}...`, status);
-
-            if (status === 'running' || status === 'queued') {
-                this.stopPolling();
-                this.pollTimer = setTimeout(() => this.pollJobStatus(), 2000);
+                this.showToast('Failed to fetch job status', 'error');
                 return;
             }
 
-            this.stopPolling();
+            const job = await response.json();
 
-            if (status === 'completed') {
-                try {
-                    await this.showResults();
-                    this.updateStatus('Analysis completed.', 'completed');
-                    this.showToast('Analysis completed successfully!', 'success');
-                } catch (e) {
-                    console.error('showResults failed:', e);
-                    this.updateStatus(`Completed but failed to render results: ${e.message}`, 'failed');
-                    this.showToast(`Render failed: ${e.message}`, 'error');
-                }
+            if (jobIdAtRequestTime !== this.currentJobId) {
                 return;
             }
 
-            if (status === 'failed') {
-                const errorMsg = job.error || 'Unknown error';
-                this.updateStatus(`Failed: ${errorMsg}`, 'failed');
-                this.showToast(`Analysis failed: ${errorMsg}`, 'error');
+            this.updateStatus(
+                job.status === 'completed' 
+                    ? 'Analysis complete!' 
+                    : `Processing: ${job.status}...`,
+                job.status
+            );
+
+            if (job.status === 'failed') {
+                this.showToast(`Job failed: ${job.error || 'Unknown error'}`, 'error');
                 return;
             }
 
-            this.updateStatus(`Unknown status: ${status}`, 'failed');
-            this.showToast(`Unknown job status: ${status}`, 'error');
+            if (job.status === 'completed') {
+                await this.showResults();
+                return;
+            }
 
+            this.pollTimer = setTimeout(() => this.pollJobStatus(), 2000);
         } catch (error) {
-            console.error('Poll error:', error);
-            this.updateStatus(`Polling error: ${error.message}`, 'failed');
-            this.stopPolling();
-            this.pollTimer = setTimeout(() => this.pollJobStatus(), 5000);
+            this.showToast(`Polling error: ${error.message}`, 'error');
         }
     }
 
@@ -351,31 +372,36 @@ class BrainAnalysisApp {
     showStatusCard() {
         const statusCard = document.getElementById('statusCard');
         const emptyState = document.getElementById('emptyState');
-        
-        statusCard.style.display = 'block';
-        emptyState.style.display = 'none';
+
+        if (statusCard) statusCard.style.display = 'block';
+        if (emptyState) emptyState.style.display = 'none';
     }
 
     updateStatus(message, status) {
-        const elapsedSeconds = Math.floor((Date.now() - this.statusStartTime) / 1000);
+        const started = this.statusStartTime || Date.now();
+        const elapsedSeconds = Math.floor((Date.now() - started) / 1000);
         const minutes = Math.floor(elapsedSeconds / 60);
         const seconds = elapsedSeconds % 60;
         const timeStr = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 
-        document.getElementById('statusTitle').textContent = status.charAt(0).toUpperCase() + status.slice(1);
-        document.getElementById('statusMessage').textContent = message;
-        document.getElementById('statusTime').textContent = timeStr;
+        const titleEl = document.getElementById('statusTitle');
+        const messageEl = document.getElementById('statusMessage');
+        const timeEl = document.getElementById('statusTime');
+        const progressEl = document.getElementById('progressFill');
 
-        // Update progress
+        if (titleEl) titleEl.textContent = `Status: ${status.charAt(0).toUpperCase() + status.slice(1)}`;
+        if (messageEl) messageEl.textContent = message;
+        if (timeEl) timeEl.textContent = timeStr;
+
         const progressMap = {
-            'queued': 10,
-            'running': 50,
-            'completed': 100,
-            'failed': 100
+            queued: 10,
+            running: 50,
+            completed: 100,
+            failed: 100
         };
-        
+
         const width = progressMap[status] || 10;
-        document.getElementById('progressFill').style.width = width + '%';
+        if (progressEl) progressEl.style.width = `${width}%`;
     }
 
     async showResults() {
@@ -383,84 +409,108 @@ class BrainAnalysisApp {
         const resultsContainer = document.getElementById('resultsContainer');
         const emptyState = document.getElementById('emptyState');
 
-        // Chỉ đổi UI sau khi load thật sự thành công
         await this.loadResults();
         await this.initalize3DViewer();
 
-        statusCard.style.display = 'none';
-        emptyState.style.display = 'none';
-        resultsContainer.style.display = 'flex';
+        if (statusCard) statusCard.style.display = 'none';
+        if (emptyState) emptyState.style.display = 'none';
+        if (resultsContainer) resultsContainer.style.display = 'grid';
     }
 
     async loadResults() {
         const response = await fetch(`/jobs/${this.currentJobId}/report`, {
             cache: 'no-store',
             headers: {
-                'Accept': 'application/json'
+                Accept: 'application/json'
             }
         });
 
         if (!response.ok) {
-            const err = await response.json().catch(() => ({}));
-            throw new Error(err.detail || `HTTP ${response.status}`);
+            this.showToast('Failed to load report', 'error');
+            return;
         }
 
         const report = await response.json();
+        this.reportData = report;
 
-        document.getElementById('metricStatus').textContent = '✓ ' + (report.status || 'Complete');
+        const metricStatus = document.getElementById('metricStatus');
+        if (metricStatus) {
+            metricStatus.textContent = report.status ? report.status.toUpperCase() : 'UNKNOWN';
+        }
 
-        const timeSeconds = Math.floor((Date.now() - this.statusStartTime) / 1000);
+        const timeSeconds = Math.floor((Date.now() - (this.statusStartTime || Date.now())) / 1000);
         const minutes = Math.floor(timeSeconds / 60);
         const seconds = timeSeconds % 60;
-        document.getElementById('metricTime').textContent = `${minutes}m ${seconds}s`;
 
-        document.getElementById('metricModel').textContent = 'UNet3D';
-        document.getElementById('metricSynthesis').textContent =
-            report.synthesis_status && report.synthesis_status !== 'skipped' ? 'On' : 'Off';
+        const metricTime = document.getElementById('metricTime');
+        if (metricTime) {
+            metricTime.textContent = `${minutes}m ${seconds}s`;
+        }
+
+        const metricModel = document.getElementById('metricModel');
+        if (metricModel) {
+            metricModel.textContent = report.metadata?.uses_monai ? 'UNet3D (MONAI)' : 'UNet3D';
+        }
+
+        const metricSynthesis = document.getElementById('metricSynthesis');
+        if (metricSynthesis) {
+            metricSynthesis.textContent = report.synthesis_status || 'Off';
+        }
 
         this.updateDetailsTab(report);
         this.updateVolumesTab(report);
+        this.updatePreviewTab(report);
 
         return report;
     }
 
     updateDetailsTab(report) {
         const detailsContent = document.getElementById('detailsContent');
+        if (!detailsContent) return;
+
         let html = '<div class="details-list">';
 
         html += `<div class="detail-item">
             <span class="detail-label">Case ID:</span>
-            <span class="detail-value">${report.case_id}</span>
+            <span class="detail-value">${this.escapeHtml(report.case_id || '-')}</span>
         </div>`;
 
         html += `<div class="detail-item">
             <span class="detail-label">Status:</span>
-            <span class="detail-value">${report.status}</span>
+            <span class="detail-value">${this.escapeHtml(report.status || '-')}</span>
         </div>`;
 
         if (report.missing_flags) {
-            const missing = Object.entries(report.missing_flags)
-                .filter(([_, v]) => v === 1)
-                .map(([k]) => k.toUpperCase())
-                .join(', ') || 'None';
-            
-            html += `<div class="detail-item">
-                <span class="detail-label">Missing Modalities:</span>
-                <span class="detail-value">${missing}</span>
-            </div>`;
+            const flags = Object.entries(report.missing_flags)
+                .filter(([_, v]) => v)
+                .map(([k]) => k)
+                .join(', ');
+            if (flags) {
+                html += `<div class="detail-item">
+                    <span class="detail-label">Missing Modalities:</span>
+                    <span class="detail-value">${this.escapeHtml(flags)}</span>
+                </div>`;
+            }
         }
 
         if (report.synthesis_status) {
             html += `<div class="detail-item">
                 <span class="detail-label">Synthesis:</span>
-                <span class="detail-value">${report.synthesis_status}</span>
+                <span class="detail-value">${this.escapeHtml(report.synthesis_status)}</span>
             </div>`;
         }
 
-        if (report.downsample_factor) {
+        if (report.downsample_factor !== undefined && report.downsample_factor !== null) {
             html += `<div class="detail-item">
                 <span class="detail-label">Downsample Factor:</span>
-                <span class="detail-value">${report.downsample_factor.toFixed(2)}x</span>
+                <span class="detail-value">${report.downsample_factor}</span>
+            </div>`;
+        }
+
+        if (report.spacing_mm) {
+            html += `<div class="detail-item">
+                <span class="detail-label">Spacing (mm):</span>
+                <span class="detail-value">${report.spacing_mm}</span>
             </div>`;
         }
 
@@ -470,7 +520,8 @@ class BrainAnalysisApp {
 
     updateVolumesTab(report) {
         const volumesChart = document.getElementById('volumesChart');
-        
+        if (!volumesChart) return;
+
         if (!report.region_volumes_mm3) {
             volumesChart.innerHTML = '<p>No volume data available</p>';
             return;
@@ -478,29 +529,82 @@ class BrainAnalysisApp {
 
         let html = '<div class="volumes-list">';
         for (const [region, volume] of Object.entries(report.region_volumes_mm3)) {
-            const volumeCm3 = (volume / 1000).toFixed(2);
+            const displayName = region === 'ET' ? 'Enhancing Tumor' : 
+                              region === 'TC' ? 'Tumor Core' : 
+                              region === 'WT' ? 'Whole Tumor' : region;
             html += `<div class="volume-item">
-                <span class="volume-label">${region}</span>
-                <span class="volume-value">${volumeCm3} cm³</span>
+                <span class="volume-label">${this.escapeHtml(displayName)}:</span>
+                <span class="volume-value">${(volume || 0).toFixed(2)} mm³</span>
             </div>`;
         }
         html += '</div>';
-        
+
         volumesChart.innerHTML = html;
     }
 
+    updatePreviewTab(report) {
+        const preview = report.preview || {};
+        const previewContent = document.getElementById('previewContent');
+
+        const axialImg = document.getElementById('previewAxial');
+        const coronalImg = document.getElementById('previewCoronal');
+        const sagittalImg = document.getElementById('previewSagittal');
+
+        if (axialImg) {
+            axialImg.src = preview.axial || '';
+            axialImg.style.display = preview.axial ? 'block' : 'none';
+        }
+
+        if (coronalImg) {
+            coronalImg.src = preview.coronal || '';
+            coronalImg.style.display = preview.coronal ? 'block' : 'none';
+        }
+
+        if (sagittalImg) {
+            sagittalImg.src = preview.sagittal || '';
+            sagittalImg.style.display = preview.sagittal ? 'block' : 'none';
+        }
+
+        if (previewContent && !axialImg && !coronalImg && !sagittalImg) {
+            previewContent.innerHTML = `
+                <div style="grid-column: 1 / -1; text-align: center; padding: 2rem;">
+                    <p style="color: #888;">Preview images not available</p>
+                </div>
+            `;
+        }
+    }
+
+    clearPreviewImages() {
+        ['previewAxial', 'previewCoronal', 'previewSagittal'].forEach(id => {
+            const img = document.getElementById(id);
+            if (img) {
+                img.src = '';
+                img.style.display = 'none';
+            }
+        });
+
+        const previewContent = document.getElementById('previewContent');
+        if (previewContent) previewContent.innerHTML = '';
+    }
+
     switchTab(tabName) {
-        // Update active tabs
         document.querySelectorAll('.report-tab').forEach(tab => {
             tab.classList.remove('active');
         });
-        document.querySelector(`.report-tab[data-tab="${tabName}"]`).classList.add('active');
 
-        // Update active content
+        const targetTab = document.querySelector(`.report-tab[data-tab="${tabName}"]`);
+        if (targetTab) {
+            targetTab.classList.add('active');
+        }
+
         document.querySelectorAll('.tab-content').forEach(content => {
             content.classList.remove('active');
         });
-        document.getElementById(tabName + 'Tab').classList.add('active');
+
+        const activeContent = document.getElementById(tabName + 'Tab');
+        if (activeContent) {
+            activeContent.classList.add('active');
+        }
     }
 
     /* =====================================
@@ -510,161 +614,351 @@ class BrainAnalysisApp {
     async initalize3DViewer() {
         const container = document.getElementById('threejsContainer');
         if (!container) {
-            throw new Error('3D viewer container not found');
+            console.warn('Container not found for 3D viewer');
+            return;
         }
-
-        // clear viewer cũ nếu có
-        if (this.renderer) {
-            this.renderer.dispose();
-            this.renderer = null;
-        }
+        this.destroy3DViewer();
         container.innerHTML = '';
-
-        this.scene = new THREE.Scene();
-        this.scene.background = new THREE.Color(0x1e293b);
-
-        this.camera = new THREE.PerspectiveCamera(
-            75,
-            container.clientWidth / container.clientHeight,
-            0.1,
-            10000
-        );
-        this.camera.position.z = 200;
-
-        this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        this.renderer.setSize(container.clientWidth, container.clientHeight);
-        this.renderer.setPixelRatio(window.devicePixelRatio);
-        container.appendChild(this.renderer.domElement);
-
-        this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
-        this.controls.enableDamping = true;
-        this.controls.dampingFactor = 0.05;
-        this.controls.autoRotate = true;
-        this.controls.autoRotateSpeed = 2;
-
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-        this.scene.add(ambientLight);
-
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        directionalLight.position.set(100, 100, 100);
-        this.scene.add(directionalLight);
-
-        await this.loadMesh();
-
-        const animate = () => {
-            if (!this.renderer || !this.scene || !this.camera) return;
-            requestAnimationFrame(animate);
-            this.controls?.update();
-            this.renderer.render(this.scene, this.camera);
-        };
-        animate();
-
-        window.addEventListener('resize', () => this.onWindowResize());
-    }
-
-    async loadMesh() {
+        // Wait for THREE.js to be loaded
+        if (!window.THREE || !this.threeLoaded) {
+            await this.ensureThreeJSLoaded();
+        }
+        if (!window.THREE) {
+            this.createPlaceholderGeometry('THREE.js library not available');
+            return;
+        }
         try {
-            const response = await fetch(`/jobs/${this.currentJobId}/file/mesh`, {
-                cache: 'no-store'
-            });
-
-            if (!response.ok) {
-                throw new Error(`Mesh file not available (HTTP ${response.status})`);
+            this.scene = new THREE.Scene();
+            this.scene.background = new THREE.Color(0x1e293b);
+            const width = Math.max(container.clientWidth || 640, 320);
+            const height = Math.max(container.clientHeight || 480, 240);
+            this.camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 10000);
+            this.camera.position.set(0, 0, 200);
+            this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            this.renderer.setSize(width, height);
+            this.renderer.setPixelRatio(window.devicePixelRatio || 1);
+            container.appendChild(this.renderer.domElement);
+            if (window.THREE.OrbitControls) {
+                this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
+                this.controls.enableDamping = true;
+                this.controls.dampingFactor = 0.05;
+                this.controls.enableZoom = true;
+            } else {
+                console.warn('OrbitControls not available');
+            }
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+            this.scene.add(ambientLight);
+            const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight1.position.set(100, 100, 100);
+            this.scene.add(directionalLight1);
+            const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.5);
+            directionalLight2.position.set(-100, -50, 80);
+            this.scene.add(directionalLight2);
+            const gridHelper = new THREE.GridHelper(240, 12, 0x334155, 0x1f2937);
+            gridHelper.position.y = -70;
+            this.scene.add(gridHelper);
+            await this.reloadMeshForSelectedLod();
+            const animate = () => {
+                this.animationFrameId = requestAnimationFrame(animate);
+                if (this.controls) this.controls.update();
+                this.renderer.render(this.scene, this.camera);
+            };
+            animate();
+            this.resizeHandler = () => this.onWindowResize();
+            window.addEventListener('resize', this.resizeHandler);
+        } catch (error) {
+            console.error('Error initializing 3D viewer:', error);
+            this.createPlaceholderGeometry(`Initialization error: ${error.message}`);
+        }
+    }
+    async reloadMeshForSelectedLod() {
+        if (!this.scene) return;
+        const objectToRemove = this.regionGroup || this.mesh;
+        if (objectToRemove) {
+            this.scene.remove(objectToRemove);
+            this.disposeObject(objectToRemove);
+        }
+        this.mesh = null;
+        this.regionGroup = null;
+        const regionUrls = this.getRegionMeshUrlsForLod(this.currentMeshLod);
+        if (!regionUrls) {
+            this.createPlaceholderGeometry('No region meshes available');
+            return;
+        }
+        await this.loadRegionMeshes(regionUrls);
+    }
+    getRegionMeshUrlsForLod(lod) {
+        if (!this.reportData) return null;
+        const requested = String(lod || 'low').toLowerCase();
+        const regions = this.reportData.viewer?.regions;
+        if (!regions) return null;
+        return {
+            wt: regions.wt?.[requested] || null,
+            tc: regions.tc?.[requested] || null,
+            et: regions.et?.[requested] || null
+        };
+    }
+    async loadRegionMeshes(regionUrls) {
+        try {
+            if (!window.THREE || !window.THREE.OBJLoader) {
+                this.createPlaceholderGeometry('OBJLoader not available');
+                return;
             }
 
-            // Tạm thời chưa parse OBJ thật, nên vẫn dùng placeholder
-            await response.blob();
+            const group = new THREE.Group();
+            const loader = new THREE.OBJLoader();
 
-            const geometry = new THREE.BoxGeometry(100, 100, 100);
-            const material = new THREE.MeshPhongMaterial({
-                color: 0x3b82f6,
-                emissive: 0x1e40af,
-                shininess: 100,
-                wireframe: false
-            });
+            const configs = [
+                { key: 'wt', color: 0x7ffcff, opacity: 0.28 },
+                { key: 'tc', color: 0xd78cff, opacity: 0.45 },
+                { key: 'et', color: 0xfff200, opacity: 0.85 }
+            ];
 
-            this.mesh = new THREE.Mesh(geometry, material);
-            this.scene.add(this.mesh);
+            let loadedAny = false;
 
-            const bbox = new THREE.Box3().setFromObject(this.mesh);
-            const center = bbox.getCenter(new THREE.Vector3());
-            this.camera.position.copy(center);
-            this.camera.position.z += bbox.getSize(new THREE.Vector3()).z * 1.5;
-            this.controls.target.copy(center);
-            this.controls.update();
+            for (const cfg of configs) {
+                const url = regionUrls[cfg.key];
+                if (!url) continue;
 
+                const response = await fetch(url);
+                if (!response.ok) continue;
+
+                const text = await response.text();
+                const object = loader.parse(text);
+
+                object.traverse((child) => {
+                    if (child.isMesh) {
+                        child.material = new THREE.MeshPhongMaterial({
+                            color: cfg.color,
+                            transparent: true,
+                            opacity: cfg.opacity,
+                            depthWrite: false,
+                            shininess: 80,
+                            side: THREE.DoubleSide
+                        });
+                    }
+                });
+
+                group.add(object);
+                loadedAny = true;
+            }
+
+            if (!loadedAny) {
+                this.createPlaceholderGeometry('No region mesh could be loaded');
+                return;
+            }
+
+            this.regionGroup = group;
+            this.mesh = group; // để các nút reset/center vẫn dùng lại logic cũ
+            this.scene.add(group);
+            this.fitCameraToObject(group);
         } catch (error) {
-            console.error('Error loading mesh:', error);
-            this.createPlaceholderGeometry();
+            console.error('Error loading region meshes:', error);
+            this.createPlaceholderGeometry(`Region mesh load error: ${error.message}`);
         }
     }
+    getMeshUrlForLod(lod) {
+        if (!this.reportData) return null;
+        const requested = String(lod || 'low').toLowerCase();
+        const downloads = this.reportData.downloads || {};
+        if (requested === 'high' && downloads.brain_mesh_high) return downloads.brain_mesh_high;
+        if (requested === 'medium' && downloads.brain_mesh_medium) return downloads.brain_mesh_medium;
+        if (downloads.brain_mesh_low) return downloads.brain_mesh_low;
+        return this.currentJobId
+            ? `/jobs/${this.currentJobId}/file/brain_mesh?lod=${encodeURIComponent(requested)}`
+            : null;
+    }
 
-    createPlaceholderGeometry() {
-        // Create some geometric shapes for visualization
+    async loadMesh(url) {
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                this.createPlaceholderGeometry(`Mesh fetch failed: ${response.status}`);
+                return;
+            }
+
+            const text = await response.text();
+
+            if (window.THREE && window.THREE.OBJLoader) {
+                const loader = new THREE.OBJLoader();
+                const object = loader.parse(text);
+
+                object.traverse((child) => {
+                    if (child.isMesh) {
+                        child.material = new THREE.MeshPhongMaterial({
+                            color: 0x3b82f6,
+                            emissive: 0x1e40af,
+                            shininess: 100
+                        });
+                    }
+                });
+
+                this.mesh = object;
+                this.scene.add(object);
+                this.fitCameraToObject(object);
+                return;
+            }
+            this.createPlaceholderGeometry('OBJLoader not available');
+        } catch (error) {
+            console.error('Error loading mesh:', error);
+            this.createPlaceholderGeometry(`Load error: ${error.message}`);
+        }
+    }
+    parseSTLBinary(arrayBuffer) {
+        const view = new DataView(arrayBuffer);
+        const triangles = view.getUint32(80, true);
+        const geometry = new THREE.BufferGeometry();
+        const vertices = [];
+        const normals = [];
+        let offset = 84;
+        for (let i = 0; i < triangles; i++) {
+            const nx = view.getFloat32(offset, true);
+            const ny = view.getFloat32(offset + 4, true);
+            const nz = view.getFloat32(offset + 8, true);
+            offset += 12;
+            for (let j = 0; j < 3; j++) {
+                vertices.push(
+                    view.getFloat32(offset, true),
+                    view.getFloat32(offset + 4, true),
+                    view.getFloat32(offset + 8, true)
+                );
+                normals.push(nx, ny, nz);
+                offset += 12;
+            }
+
+            offset += 2; // attribute byte count
+        }
+        geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertices), 3));
+        geometry.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(normals), 3));
+        geometry.computeBoundingBox();
+        return geometry;
+    }
+    createPlaceholderGeometry(reason = '') {
+        if (!window.THREE || !this.scene) return;
         const group = new THREE.Group();
-
-        // ET (Enhancing Tumor) - Red
-        const etGeom = new THREE.SphereGeometry(30, 32, 32);
+        const etGeom = new THREE.SphereGeometry(24, 32, 32);
         const etMat = new THREE.MeshPhongMaterial({ color: 0xef4444 });
         const etMesh = new THREE.Mesh(etGeom, etMat);
-        etMesh.position.z = -20;
+        etMesh.position.set(0, 0, -10);
         group.add(etMesh);
-
-        // TC (Tumor Core) - Purple
-        const tcGeom = new THREE.CylinderGeometry(40, 40, 60, 32);
-        const tcMat = new THREE.MeshPhongMaterial({ color: 0xa78bfa });
+        const tcGeom = new THREE.CylinderGeometry(34, 34, 70, 32);
+        const tcMat = new THREE.MeshPhongMaterial({ color: 0xa78bfa, transparent: true, opacity: 0.75 });
         const tcMesh = new THREE.Mesh(tcGeom, tcMat);
-        tcMesh.position.z = 0;
+        tcMesh.rotation.x = Math.PI / 2;
         group.add(tcMesh);
-
-        // WT (Whole Tumor) - Teal (outline)
-        const wtGeom = new THREE.BoxGeometry(100, 100, 100);
-        const wtMat = new THREE.MeshPhongMaterial({ 
+        const wtGeom = new THREE.BoxGeometry(95, 110, 80);
+        const wtMat = new THREE.MeshPhongMaterial({
             color: 0x34d399,
-            emissive: 0x0f3d2d,
+            emissive: 0x052e2b,
             wireframe: true,
             transparent: true,
-            opacity: 0.3
+            opacity: 0.35
         });
         const wtMesh = new THREE.Mesh(wtGeom, wtMat);
         group.add(wtMesh);
-
-        this.scene.add(group);
         this.mesh = group;
+        this.scene.add(group);
+        this.fitCameraToObject(group);
+        const container = document.getElementById('threejsContainer');
+        const noteId = 'viewerFallbackNote';
+        let note = document.getElementById(noteId);
+        if (!note && container) {
+            note = document.createElement('div');
+            note.id = noteId;
+            note.style.cssText = 'position:absolute; top:10px; right:10px; background:#f97316; color:white; padding:8px 12px; border-radius:4px; font-size:12px; z-index:100;';
+            note.textContent = `⚠ Placeholder (${reason})`;
+            container.appendChild(note);
+        }
+        if (note) {
+            note.style.display = 'block';
+        }
     }
-
-    resetView() {
-        if (this.mesh) {
-            const bbox = new THREE.Box3().setFromObject(this.mesh);
-            const center = bbox.getCenter(new THREE.Vector3());
-            const size = bbox.getSize(new THREE.Vector3());
-            
-            const maxDim = Math.max(size.x, size.y, size.z);
-            const fov = this.camera.fov * (Math.PI / 180);
-            let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-            
-            this.camera.position.copy(center);
-            this.camera.position.z += cameraZ * 1.5;
+    fitCameraToObject(object) {
+        if (!this.camera || !object) return;
+        const box = new THREE.Box3().setFromObject(object);
+        if (box.isEmpty()) return;
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z) || 1;
+        const fov = this.camera.fov * (Math.PI / 180);
+        let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+        cameraZ *= 1.8;
+        this.camera.position.set(center.x, center.y, center.z + cameraZ);
+        this.camera.near = Math.max(0.1, maxDim / 100);
+        this.camera.far = Math.max(1000, maxDim * 20);
+        this.camera.updateProjectionMatrix();
+        if (this.controls) {
             this.controls.target.copy(center);
             this.controls.update();
         }
     }
-
+    resetView() {
+        if (this.mesh) {
+            this.fitCameraToObject(this.mesh);
+        }
+    }
     downloadMesh() {
-        if (this.currentJobId) {
-            window.location.href = `/jobs/${this.currentJobId}/file/mesh`;
+        if (!this.reportData) {
+            this.showToast('Mesh not available for download', 'error');
+            return;
+        }
+        const lod = String(this.currentMeshLod || 'low').toLowerCase();
+        const url = this.reportData.downloads?.[`wt_mesh_${lod}`];
+        if (url) {
+            window.open(url, '_blank');
+        } else {
+            this.showToast('WT mesh not available for download', 'error');
         }
     }
 
     onWindowResize() {
+        if (!this.renderer || !this.camera) return;
         const container = document.getElementById('threejsContainer');
-        if (!container || !this.camera || !this.renderer) return;
+        if (!container) return;
 
-        const width = container.clientWidth;
-        const height = container.clientHeight;
+        const width = Math.max(container.clientWidth || 640, 320);
+        const height = Math.max(container.clientHeight || 480, 240);
+
         this.camera.aspect = width / height;
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(width, height);
+    }
+
+    destroy3DViewer() {
+        if (this.animationFrameId) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+        }
+        if (this.resizeHandler) {
+            window.removeEventListener('resize', this.resizeHandler);
+            this.resizeHandler = null;
+        }
+        if (this.controls) {
+            this.controls.dispose();
+            this.controls = null;
+        }
+        const objectToDispose = this.regionGroup || this.mesh;
+        if (objectToDispose) {
+            this.disposeObject(objectToDispose);
+        }
+        this.mesh = null;
+        this.regionGroup = null;
+        this.camera = null;
+    }
+
+    disposeObject(object) {
+        object.traverse((node) => {
+            if (node instanceof THREE.Mesh) {
+                if (node.geometry) node.geometry.dispose();
+                if (node.material) {
+                    if (Array.isArray(node.material)) {
+                        node.material.forEach(m => m.dispose());
+                    } else {
+                        node.material.dispose();
+                    }
+                }
+            }
+        });
     }
 
     /* =====================================
@@ -672,9 +966,18 @@ class BrainAnalysisApp {
        ===================================== */
 
     downloadFile(kind) {
-        if (this.currentJobId) {
-            window.location.href = `/jobs/${this.currentJobId}/file/${kind}`;
+        if (!this.currentJobId) {
+            this.showToast('No job available for download', 'error');
+            return;
         }
+
+        const url = `/jobs/${this.currentJobId}/file/${kind}`;
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${kind}_${this.currentJobId}`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
     }
 
     /* =====================================
@@ -683,35 +986,45 @@ class BrainAnalysisApp {
 
     showToast(message, type = 'info') {
         const container = document.getElementById('toastContainer');
+        if (!container) return;
+
         const toast = document.createElement('div');
-        
-        toast.className = `toast ${type}`;
-        toast.innerHTML = `
-            <span>${type === 'success' ? '✓' : type === 'error' ? '✕' : '⚠'}</span>
-            <span>${message}</span>
+        toast.className = `toast toast-${type}`;
+        toast.textContent = message;
+        toast.style.cssText = `
+            padding: 12px 16px;
+            margin: 8px;
+            border-radius: 4px;
+            background: ${type === 'error' ? '#ef4444' : type === 'success' ? '#10b981' : '#3b82f6'};
+            color: white;
+            animation: slideIn 0.3s ease-out;
         `;
 
         container.appendChild(toast);
-
         setTimeout(() => {
-            toast.style.animation = 'slideInRight 300ms ease-out reverse';
-            setTimeout(() => toast.remove(), 300);
+            toast.style.opacity = '0';
+            toast.style.transition = 'opacity 0.3s';
+            setTimeout(() => container.removeChild(toast), 300);
         }, 3000);
     }
 
     formatBytes(bytes, decimals = 2) {
         if (bytes === 0) return '0 Bytes';
-
         const k = 1024;
         const dm = decimals < 0 ? 0 : decimals;
         const sizes = ['Bytes', 'KB', 'MB', 'GB'];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
-
         return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+    }
+
+    escapeHtml(value) {
+        if (!value) return '';
+        const div = document.createElement('div');
+        div.textContent = String(value);
+        return div.innerHTML;
     }
 }
 
-// Initialize app when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new BrainAnalysisApp();
 });

@@ -9,8 +9,8 @@ pipeline:
 # ── Paths ────────────────────────────────────────────────────────────────────
 paths:
   # Model weights  (typo 'segmentaion' corrected to 'segmentation')
-  segmentation_weights: "segmentation-module/model-weight/final_model_unet.pth"
-  synthesis_weights:    "synthesis-module/model-weight/epoch_118.pth"
+  segmentation_weights: "models/segmentation_module/model-weight/final_model_unet.pth"
+  synthesis_weights:    "models/synthesis_module/model-weight/epoch_118.pth"
 
   # I/O
   input_data_dir:       "./data/input"

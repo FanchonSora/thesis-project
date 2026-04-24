@@ -9,7 +9,7 @@
 - [ ] Python 3.9+ installed
 - [ ] PyTorch installed (GPU recommended)
 - [ ] Virtual environment activated
-- [ ] Dependencies installed: `pip install -r synthesis-module/requirements.txt`
+- [ ] Dependencies installed: `pip install -r models/synthesis_module/requirements.txt`
 - [ ] BraTS2021 dataset available
 - [ ] Adequate disk space (~50GB for dataset + models + logs)
 - [ ] GPU with 12GB+ VRAM (or reduce batchsize for smaller GPUs)
