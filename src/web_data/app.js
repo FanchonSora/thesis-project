@@ -17,6 +17,22 @@ class BrainAnalysisApp {
         this.resizeHandler = null;
         this.currentMeshLod = 'low';
         this.threeLoaded = false;
+
+        // Ground Truth comparison
+        this.gtScene = null;
+        this.gtCamera = null;
+        this.gtRenderer = null;
+        this.gtControls = null;
+        this.gtRegionGroup = null;
+        this.gtAnimationFrameId = null;
+        this.compPredScene = null;
+        this.compPredCamera = null;
+        this.compPredRenderer = null;
+        this.compPredControls = null;
+        this.compPredRegionGroup = null;
+        this.compPredAnimationFrameId = null;
+        this.gtMeshData = null;
+
         this.init();
     }
 
@@ -183,6 +199,9 @@ class BrainAnalysisApp {
         if (downloadMesh) {
             downloadMesh.addEventListener('click', () => this.downloadFile('mesh'));
         }
+
+        // Ground Truth upload
+        this.setupGtUpload();
     }
     handleDragDrop() {
         document.querySelectorAll('.drop-zone').forEach(zone => {
@@ -275,6 +294,7 @@ class BrainAnalysisApp {
         if (emptyState) emptyState.style.display = 'block';
         this.clearPreviewImages();
         this.destroy3DViewer();
+        this.destroyComparisonViewers();
         this.clearTabContents();
         this.updateSubmitButtonState();
         this.showToast('All uploads cleared', 'success');
@@ -461,6 +481,9 @@ class BrainAnalysisApp {
         if (statusCard) statusCard.style.display = 'none';
         if (emptyState) emptyState.style.display = 'none';
         if (resultsContainer) resultsContainer.style.display = 'grid';
+
+        // Initialize comparison prediction viewer (GT section is already visible)
+        this.initComparisonPredViewer();
     }
 
     async loadResults() {
@@ -1229,6 +1252,380 @@ class BrainAnalysisApp {
         const div = document.createElement('div');
         div.textContent = String(value);
         return div.innerHTML;
+    }
+
+    /* =====================================
+       GROUND TRUTH COMPARISON
+       ===================================== */
+
+    setupGtUpload() {
+        const gtDropZone = document.getElementById('gtDropZone');
+        const gtFileInput = document.getElementById('gtFileInput');
+        const gtRemoveBtn = document.getElementById('gtRemoveBtn');
+
+        if (gtDropZone) {
+            gtDropZone.addEventListener('click', () => {
+                if (gtFileInput) gtFileInput.click();
+            });
+            gtDropZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                gtDropZone.classList.add('drag-over');
+            });
+            gtDropZone.addEventListener('dragleave', () => {
+                gtDropZone.classList.remove('drag-over');
+            });
+            gtDropZone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                gtDropZone.classList.remove('drag-over');
+                if (e.dataTransfer.files.length > 0) {
+                    this.handleGtFileSelect(e.dataTransfer.files[0]);
+                }
+            });
+        }
+
+        if (gtFileInput) {
+            gtFileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    this.handleGtFileSelect(e.target.files[0]);
+                }
+            });
+        }
+
+        if (gtRemoveBtn) {
+            gtRemoveBtn.addEventListener('click', () => this.removeGroundTruth());
+        }
+    }
+
+    async handleGtFileSelect(file) {
+        if (!file.name.endsWith('.nii') && !file.name.endsWith('.nii.gz')) {
+            this.showToast('Invalid file format. Please upload .nii or .nii.gz segmentation mask', 'error');
+            return;
+        }
+
+        if (!this.currentJobId) {
+            this.showToast('Please run analysis first before uploading ground truth', 'error');
+            return;
+        }
+
+        // Show loading state
+        const gtDropZone = document.getElementById('gtDropZone');
+        const gtFileInfo = document.getElementById('gtFileInfo');
+        const gtLoading = document.getElementById('gtLoading');
+        if (gtDropZone) gtDropZone.style.display = 'none';
+        if (gtFileInfo) gtFileInfo.style.display = 'none';
+        if (gtLoading) gtLoading.style.display = 'flex';
+
+        try {
+            const formData = new FormData();
+            formData.append('seg_file', file);
+
+            const response = await fetch(`/jobs/${this.currentJobId}/ground_truth`, {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.detail || 'Upload failed');
+            }
+
+            const gtData = await response.json();
+            this.gtMeshData = gtData;
+
+            // Show file info
+            if (gtLoading) gtLoading.style.display = 'none';
+            if (gtFileInfo) {
+                gtFileInfo.style.display = 'flex';
+                const nameEl = document.getElementById('gtFileName');
+                const sizeEl = document.getElementById('gtFileSize');
+                if (nameEl) nameEl.textContent = file.name;
+                if (sizeEl) sizeEl.textContent = `${this.formatBytes(file.size)} — Labels: ${(gtData.unique_labels || []).join(', ')}`;
+            }
+
+            // Load GT meshes into the comparison viewer
+            await this.loadGtMeshes(gtData.meshes);
+
+            this.showToast('Ground truth loaded! Compare with prediction above.', 'success');
+        } catch (error) {
+            if (gtLoading) gtLoading.style.display = 'none';
+            if (gtDropZone) gtDropZone.style.display = 'flex';
+            this.showToast(`Ground truth upload failed: ${error.message}`, 'error');
+        }
+    }
+
+    removeGroundTruth() {
+        this.gtMeshData = null;
+
+        const gtDropZone = document.getElementById('gtDropZone');
+        const gtFileInfo = document.getElementById('gtFileInfo');
+        const gtLoading = document.getElementById('gtLoading');
+        const gtFileInput = document.getElementById('gtFileInput');
+
+        if (gtDropZone) gtDropZone.style.display = 'flex';
+        if (gtFileInfo) gtFileInfo.style.display = 'none';
+        if (gtLoading) gtLoading.style.display = 'none';
+        if (gtFileInput) gtFileInput.value = '';
+
+        // Clear GT viewer
+        this.destroyGtViewer();
+        this.initGtEmptyState();
+
+        this.showToast('Ground truth removed', 'success');
+    }
+
+    /** Initialize the comparison prediction viewer (left side) */
+    async initComparisonPredViewer() {
+        const container = document.getElementById('compPredContainer');
+        if (!container || !window.THREE) return;
+
+        container.innerHTML = '';
+        this.destroyCompPredViewer();
+
+        const {scene, camera, renderer, controls} = this.createMiniViewer(container);
+        this.compPredScene = scene;
+        this.compPredCamera = camera;
+        this.compPredRenderer = renderer;
+        this.compPredControls = controls;
+
+        // Load prediction meshes
+        const regionUrls = this.getRegionMeshUrlsForLod('low');
+        if (regionUrls) {
+            await this.loadMeshesIntoScene(scene, regionUrls);
+        }
+
+        this.fitMiniCamera(scene, camera, controls);
+
+        const animate = () => {
+            this.compPredAnimationFrameId = requestAnimationFrame(animate);
+            if (controls) controls.update();
+            renderer.render(scene, camera);
+        };
+        animate();
+
+        // Initialize GT empty state
+        this.initGtEmptyState();
+    }
+
+    initGtEmptyState() {
+        const container = document.getElementById('compGtContainer');
+        if (!container) return;
+
+        // If GT viewer exists, don't replace
+        if (this.gtScene) return;
+
+        container.innerHTML = `
+            <div class="gt-empty-state">
+                <div class="gt-empty-state-icon">🎯</div>
+                <div class="gt-empty-state-text">
+                    Upload a segmentation mask below to see the ground truth comparison
+                </div>
+            </div>
+        `;
+    }
+
+    async loadGtMeshes(meshUrls) {
+        const container = document.getElementById('compGtContainer');
+        if (!container || !window.THREE) return;
+
+        container.innerHTML = '';
+        this.destroyGtViewer();
+
+        const {scene, camera, renderer, controls} = this.createMiniViewer(container);
+        this.gtScene = scene;
+        this.gtCamera = camera;
+        this.gtRenderer = renderer;
+        this.gtControls = controls;
+
+        if (meshUrls) {
+            const urls = {
+                wt: meshUrls.wt?.low || meshUrls.wt?.medium || meshUrls.wt?.high || null,
+                tc: meshUrls.tc?.low || meshUrls.tc?.medium || meshUrls.tc?.high || null,
+                et: meshUrls.et?.low || meshUrls.et?.medium || meshUrls.et?.high || null,
+            };
+            await this.loadMeshesIntoScene(scene, urls);
+        }
+
+        this.fitMiniCamera(scene, camera, controls);
+
+        // Sync camera with prediction side if available
+        if (this.compPredCamera && this.compPredControls) {
+            camera.position.copy(this.compPredCamera.position);
+            controls.target.copy(this.compPredControls.target);
+            controls.update();
+        }
+
+        const animate = () => {
+            this.gtAnimationFrameId = requestAnimationFrame(animate);
+            if (controls) controls.update();
+            renderer.render(scene, camera);
+        };
+        animate();
+    }
+
+    /** Create a mini Three.js viewer for the comparison panels */
+    createMiniViewer(container) {
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0f172a);
+
+        const width = Math.max(container.clientWidth || 400, 200);
+        const height = Math.max(container.clientHeight || 380, 200);
+
+        const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 10000);
+        camera.position.set(0, 0, 200);
+
+        const renderer = new THREE.WebGLRenderer({antialias: true, alpha: true});
+        renderer.setSize(width, height);
+        renderer.setPixelRatio(window.devicePixelRatio || 1);
+        renderer.sortObjects = true;
+        container.appendChild(renderer.domElement);
+
+        let controls = null;
+        if (window.THREE.OrbitControls) {
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.08;
+            controls.enableZoom = true;
+            controls.autoRotate = true;
+            controls.autoRotateSpeed = 0.6;
+        }
+
+        // Lighting
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        scene.add(new THREE.HemisphereLight(0x88ccff, 0x444422, 0.4));
+        const dLight1 = new THREE.DirectionalLight(0xffffff, 0.7);
+        dLight1.position.set(150, 200, 150);
+        scene.add(dLight1);
+        const dLight2 = new THREE.DirectionalLight(0x8899cc, 0.4);
+        dLight2.position.set(-100, -50, 100);
+        scene.add(dLight2);
+
+        return {scene, camera, renderer, controls};
+    }
+
+    /** Load WT/TC/ET meshes into a given scene */
+    async loadMeshesIntoScene(scene, regionUrls) {
+        if (!window.THREE || !window.THREE.OBJLoader) return;
+
+        const loader = new THREE.OBJLoader();
+        const configs = [
+            {key: 'wt', color: 0x00e5ff, emissive: 0x003344, opacity: 0.22, shininess: 40, renderOrder: 1},
+            {key: 'tc', color: 0xcc66ff, emissive: 0x220044, opacity: 0.50, shininess: 60, renderOrder: 2},
+            {key: 'et', color: 0xff4466, emissive: 0x330011, opacity: 0.85, shininess: 90, renderOrder: 3},
+        ];
+
+        const group = new THREE.Group();
+
+        for (const cfg of configs) {
+            const url = regionUrls[cfg.key];
+            if (!url) continue;
+
+            try {
+                const response = await fetch(url);
+                if (!response.ok) continue;
+
+                const text = await response.text();
+                const object = loader.parse(text);
+
+                object.traverse((child) => {
+                    if (child.isMesh) {
+                        child.material = new THREE.MeshPhongMaterial({
+                            color: cfg.color,
+                            emissive: cfg.emissive,
+                            transparent: true,
+                            opacity: cfg.opacity,
+                            depthWrite: cfg.key === 'et',
+                            shininess: cfg.shininess,
+                            side: THREE.DoubleSide,
+                            blending: THREE.NormalBlending,
+                        });
+                        child.renderOrder = cfg.renderOrder;
+                    }
+                });
+
+                group.add(object);
+            } catch (e) {
+                console.warn(`Failed to load ${cfg.key} mesh from ${url}:`, e);
+            }
+        }
+
+        scene.add(group);
+        return group;
+    }
+
+    fitMiniCamera(scene, camera, controls) {
+        if (!camera) return;
+        const box = new THREE.Box3().setFromObject(scene);
+        if (box.isEmpty()) return;
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z) || 1;
+        const fov = camera.fov * (Math.PI / 180);
+        let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+        cameraZ *= 1.8;
+        camera.position.set(center.x, center.y, center.z + cameraZ);
+        camera.near = Math.max(0.1, maxDim / 100);
+        camera.far = Math.max(1000, maxDim * 20);
+        camera.updateProjectionMatrix();
+        if (controls) {
+            controls.target.copy(center);
+            controls.update();
+        }
+    }
+
+    destroyGtViewer() {
+        if (this.gtAnimationFrameId) {
+            cancelAnimationFrame(this.gtAnimationFrameId);
+            this.gtAnimationFrameId = null;
+        }
+        if (this.gtControls) {
+            this.gtControls.dispose();
+            this.gtControls = null;
+        }
+        if (this.gtRenderer) {
+            this.gtRenderer.dispose();
+            this.gtRenderer = null;
+        }
+        this.gtScene = null;
+        this.gtCamera = null;
+    }
+
+    destroyCompPredViewer() {
+        if (this.compPredAnimationFrameId) {
+            cancelAnimationFrame(this.compPredAnimationFrameId);
+            this.compPredAnimationFrameId = null;
+        }
+        if (this.compPredControls) {
+            this.compPredControls.dispose();
+            this.compPredControls = null;
+        }
+        if (this.compPredRenderer) {
+            this.compPredRenderer.dispose();
+            this.compPredRenderer = null;
+        }
+        this.compPredScene = null;
+        this.compPredCamera = null;
+    }
+
+    destroyComparisonViewers() {
+        this.destroyGtViewer();
+        this.destroyCompPredViewer();
+        this.gtMeshData = null;
+
+        // Reset GT upload UI
+        const gtDropZone = document.getElementById('gtDropZone');
+        const gtFileInfo = document.getElementById('gtFileInfo');
+        const gtLoading = document.getElementById('gtLoading');
+        const gtFileInput = document.getElementById('gtFileInput');
+        if (gtDropZone) gtDropZone.style.display = 'flex';
+        if (gtFileInfo) gtFileInfo.style.display = 'none';
+        if (gtLoading) gtLoading.style.display = 'none';
+        if (gtFileInput) gtFileInput.value = '';
+
+        // Clear containers
+        const compPred = document.getElementById('compPredContainer');
+        const compGt = document.getElementById('compGtContainer');
+        if (compPred) compPred.innerHTML = '';
+        if (compGt) compGt.innerHTML = '';
     }
 }
 

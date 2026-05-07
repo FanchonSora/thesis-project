@@ -567,6 +567,229 @@ body {
     border-color: rgba(239, 68, 68, 0.24);
 }
 
+/* ==================================
+   COMPARISON VIEWER (Pred vs GT)
+   ================================== */
+
+.comparison-wrapper {
+    background: linear-gradient(180deg, rgba(10,20,41,0.96), rgba(5,11,24,0.98));
+    border: 1px solid var(--border);
+    border-radius: 24px;
+    box-shadow: 0 18px 50px rgba(0,0,0,0.28);
+    overflow: hidden;
+}
+
+.comparison-header {
+    padding: 24px 24px 12px;
+}
+
+.comparison-header h2 {
+    margin: 0;
+    font-size: 20px;
+}
+
+.comparison-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+    background: rgba(148, 163, 184, 0.08);
+}
+
+.comparison-panel {
+    background: #0f172a;
+    position: relative;
+}
+
+.comparison-label {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 10;
+    padding: 8px 16px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    background: rgba(10, 20, 41, 0.85);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    color: var(--text);
+}
+
+.threejs-container-half {
+    min-height: 380px;
+}
+
+.comparison-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    padding: 14px 24px;
+    border-top: 1px solid rgba(148, 163, 184, 0.1);
+    color: var(--text-muted);
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.legend-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 4px;
+    display: inline-block;
+}
+
+/* GT Upload Section */
+.gt-upload-section {
+    padding: 16px 24px 24px;
+    border-top: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.gt-upload-card {
+    position: relative;
+}
+
+.gt-upload-zone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 28px 24px;
+    border: 2px dashed rgba(148, 163, 184, 0.2);
+    border-radius: 18px;
+    background: rgba(7, 18, 38, 0.6);
+    cursor: pointer;
+    transition: all 0.25s ease;
+    text-align: center;
+}
+
+.gt-upload-zone:hover {
+    border-color: rgba(59, 130, 246, 0.45);
+    background: rgba(59, 130, 246, 0.06);
+}
+
+.gt-upload-zone.drag-over {
+    border-color: rgba(0, 208, 132, 0.5);
+    background: rgba(0, 208, 132, 0.06);
+}
+
+.gt-upload-icon {
+    font-size: 32px;
+    margin-bottom: 4px;
+}
+
+.gt-upload-title {
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--text);
+}
+
+.gt-upload-sub {
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.gt-upload-sub code {
+    background: rgba(59, 130, 246, 0.15);
+    padding: 2px 6px;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #88b5ff;
+}
+
+.gt-upload-hint {
+    font-size: 11px;
+    color: rgba(142, 167, 194, 0.6);
+    font-style: italic;
+    margin-top: 4px;
+}
+
+.gt-file-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border: 1px solid rgba(0, 208, 132, 0.3);
+    border-radius: 16px;
+    background: rgba(0, 208, 132, 0.06);
+}
+
+.gt-file-status {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.gt-file-icon {
+    font-size: 20px;
+}
+
+.gt-file-name {
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.gt-file-size {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.gt-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 24px;
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+.gt-spinner {
+    width: 22px;
+    height: 22px;
+    border: 3px solid rgba(59, 130, 246, 0.2);
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: gt-spin 0.8s linear infinite;
+}
+
+@keyframes gt-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* GT comparison empty state */
+.gt-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    min-height: 380px;
+    color: var(--text-muted);
+    text-align: center;
+    gap: 12px;
+    padding: 24px;
+}
+
+.gt-empty-state-icon {
+    font-size: 48px;
+    opacity: 0.4;
+}
+
+.gt-empty-state-text {
+    font-size: 14px;
+    max-width: 220px;
+    line-height: 1.5;
+}
+
+/* ==================================
+   RESPONSIVE MEDIA QUERIES
+   ================================== */
+
 @media (max-width: 1100px) {
     .container {
         grid-template-columns: 1fr;
@@ -583,5 +806,13 @@ body {
 
     .viewer-header {
         flex-direction: column;
+    }
+
+    .comparison-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .threejs-container-half {
+        min-height: 300px;
     }
 }

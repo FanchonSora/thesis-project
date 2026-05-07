@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import logging
+import tempfile
 import mimetypes
 import shutil
 import traceback
@@ -9,8 +10,10 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Optional
 import numpy as np
+import nibabel as nib
 from preprocessing import build_modality_paths
 from run_pipeline import process_case
+from mesh_export import export_wt_mesh_lods, export_tc_mesh_lods, export_et_mesh_lods
 import torch
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -401,6 +404,42 @@ def get_synthesis_preview(job_id: str, modality: str):
         raise HTTPException(status_code=404, detail=f"Synthesis preview for {modality} not found")
     return FileResponse(syn_path, media_type="image/png")
 
+@app.get("/jobs/{job_id}/file/gt_wt_mesh")
+def get_gt_wt_mesh(job_id: str, lod: str = Query(DEFAULT_MESH_LOD)):
+    job = _get_job_snapshot(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    gt_wt_paths = job.get("gt_wt_paths", {})
+    mesh_path = _safe_path(gt_wt_paths.get(lod))
+    if mesh_path is None:
+        raise HTTPException(status_code=404, detail=f"GT WT mesh (lod={lod}) not found")
+    return FileResponse(mesh_path, media_type="application/octet-stream", filename=mesh_path.name)
+
+
+@app.get("/jobs/{job_id}/file/gt_tc_mesh")
+def get_gt_tc_mesh(job_id: str, lod: str = Query(DEFAULT_MESH_LOD)):
+    job = _get_job_snapshot(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    gt_tc_paths = job.get("gt_tc_paths", {})
+    mesh_path = _safe_path(gt_tc_paths.get(lod))
+    if mesh_path is None:
+        raise HTTPException(status_code=404, detail=f"GT TC mesh (lod={lod}) not found")
+    return FileResponse(mesh_path, media_type="application/octet-stream", filename=mesh_path.name)
+
+
+@app.get("/jobs/{job_id}/file/gt_et_mesh")
+def get_gt_et_mesh(job_id: str, lod: str = Query(DEFAULT_MESH_LOD)):
+    job = _get_job_snapshot(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    gt_et_paths = job.get("gt_et_paths", {})
+    mesh_path = _safe_path(gt_et_paths.get(lod))
+    if mesh_path is None:
+        raise HTTPException(status_code=404, detail=f"GT ET mesh (lod={lod}) not found")
+    return FileResponse(mesh_path, media_type="application/octet-stream", filename=mesh_path.name)
+
+
 @app.get("/jobs/{job_id}/file/{kind}")
 def get_output_file(job_id: str, kind: str, lod: str = Query(DEFAULT_MESH_LOD)):
     report = _ensure_job_report_loaded(job_id)
@@ -435,6 +474,87 @@ def get_output_file(job_id: str, kind: str, lod: str = Query(DEFAULT_MESH_LOD)):
     media_type = mimetypes.guess_type(str(output_file))[0] or "application/octet-stream"
     return FileResponse(output_file, media_type=media_type, filename=output_file.name)
 
+# ---------------------------------------------------------------------------
+# Ground Truth upload & mesh generation (for thesis comparison)
+# ---------------------------------------------------------------------------
+
+@app.post("/jobs/{job_id}/ground_truth")
+async def upload_ground_truth(
+    job_id: str,
+    seg_file: UploadFile = File(...),
+):
+    """Upload a ground-truth segmentation mask NIfTI file.
+
+    Generates WT/TC/ET meshes from the mask and stores them alongside
+    the job output so they can be displayed in the viewer for comparison.
+    This endpoint is optional — used only for thesis demo purposes.
+    """
+    job = _get_job_snapshot(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    case_out = _get_case_dir(job_id)
+    case_out.mkdir(parents=True, exist_ok=True)
+    gt_dir = case_out / "ground_truth"
+    gt_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save uploaded NIfTI file
+    gt_nifti_path = gt_dir / "gt_seg.nii.gz"
+    _save_upload(seg_file, gt_nifti_path)
+
+    try:
+        # Load the segmentation mask
+        gt_img = nib.load(str(gt_nifti_path))
+        gt_data = gt_img.get_fdata().astype(np.uint8)
+
+        # BraTS label remapping: 4 -> 3 (enhancing tumor)
+        gt_data[gt_data == 4] = 3
+
+        logger.info("[GT] Loaded ground truth mask shape=%s, unique=%s", gt_data.shape, np.unique(gt_data).tolist())
+
+        # Generate meshes for WT, TC, ET
+        gt_prefix = str(gt_dir / f"{job_id}_gt")
+        gt_wt_paths = export_wt_mesh_lods(gt_data, f"{gt_prefix}_wt")
+        gt_tc_paths = export_tc_mesh_lods(gt_data, f"{gt_prefix}_tc")
+        gt_et_paths = export_et_mesh_lods(gt_data, f"{gt_prefix}_et")
+
+        # Build response with mesh URLs
+        gt_info = {
+            "status": "ok",
+            "shape": list(gt_data.shape),
+            "unique_labels": np.unique(gt_data).tolist(),
+            "voxel_counts": {
+                "WT": int((gt_data > 0).sum()),
+                "TC": int(np.isin(gt_data, [1, 3]).sum()),
+                "ET": int((gt_data == 3).sum()),
+            },
+            "meshes": {
+                "wt": {
+                    lod: f"/jobs/{job_id}/file/gt_wt_mesh?lod={lod}"
+                    for lod in ("low", "medium", "high")
+                    if gt_wt_paths.get(lod)
+                },
+                "tc": {
+                    lod: f"/jobs/{job_id}/file/gt_tc_mesh?lod={lod}"
+                    for lod in ("low", "medium", "high")
+                    if gt_tc_paths.get(lod)
+                },
+                "et": {
+                    lod: f"/jobs/{job_id}/file/gt_et_mesh?lod={lod}"
+                    for lod in ("low", "medium", "high")
+                    if gt_et_paths.get(lod)
+                },
+            },
+        }
+
+        # Store GT mesh paths in job data for later retrieval
+        _set_job(job_id, gt_wt_paths=gt_wt_paths, gt_tc_paths=gt_tc_paths, gt_et_paths=gt_et_paths)
+
+        return _json_response(gt_info)
+
+    except Exception as exc:
+        logger.error("[GT] Failed processing ground truth: %s", traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Failed to process ground truth mask: {exc}")
 if __name__ == "__main__":
     import uvicorn
     print("Starting Brain Tumor Analysis API server...")
