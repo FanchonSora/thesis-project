@@ -44,6 +44,23 @@ class PreprocessResult:
                 value["affine"] = np.asarray(value["affine"]).tolist()
         return out
 
+@dataclass
+class RawLoadResult:
+    """Result of loading raw volumes without any normalization.
+
+    Used when synthesis is needed: raw volumes are kept separate from
+    normalization so that synthesis preprocessing and segmentation
+    preprocessing can be applied independently.
+    """
+    raw_vols: Dict[str, Optional[np.ndarray]]  # modality -> raw volume (H, W, D) or None
+    affine: Optional[np.ndarray]
+    ds_factor: float
+    case_shape: Tuple[int, int, int]
+    available_modalities: List[str]
+    missing_modalities: List[str]
+    per_modality_info: Dict[str, VolumeInfo]
+    brain_mask: Optional[np.ndarray]
+
 def _scan_folder_for_prefix(folder: str) -> Optional[str]:
     all_suffixes = {
         f"{sep}{suf}"
@@ -175,6 +192,115 @@ def _resize_if_needed(volume: np.ndarray, ds_factor: float, order: int) -> np.nd
     if ds_factor >= 1.0:
         return volume
     return nd_zoom(volume, ds_factor, order=order)
+
+
+# ---------------------------------------------------------------------------
+# Raw loading (no normalization) — used when synthesis path is needed
+# ---------------------------------------------------------------------------
+
+def load_raw_volumes(
+    paths: Dict[str, str],
+    max_size: int = 240,
+    brain_mask_strategy: str = "nonzero",
+) -> RawLoadResult:
+    """Load raw NIfTI volumes WITHOUT any normalization.
+
+    This is the first step when the synthesis path is active.
+    Returns raw float32 volumes, optionally down-sampled, along with
+    metadata needed by downstream stages.
+    """
+    raw_vols: Dict[str, Optional[np.ndarray]] = {}
+    infos: Dict[str, VolumeInfo] = {}
+    first_affine: Optional[np.ndarray] = None
+    case_shape: Optional[Tuple[int, int, int]] = None
+    ds_factor = 1.0
+
+    for modality in MODALITY_ORDER:
+        path = paths.get(modality, "")
+        if not path or not os.path.exists(path):
+            raw_vols[modality] = None
+            continue
+
+        vol, affine, header = load_nifti(path)
+        vol = vol.astype(np.float32, copy=False)
+
+        if first_affine is None:
+            first_affine = affine
+
+        if case_shape is None:
+            max_dim = max(vol.shape)
+            if max_dim > max_size:
+                ds_factor = max_size / max_dim
+                print(f"  [pre-raw] volume {vol.shape} > max_size={max_size}; down-sampling x{ds_factor:.3f}")
+            case_shape = (
+                tuple(int(round(s * ds_factor)) for s in vol.shape)
+                if ds_factor < 1.0
+                else tuple(vol.shape)
+            )
+
+        vol_proc = _resize_if_needed(vol, ds_factor, order=1)
+        raw_vols[modality] = vol_proc
+
+        infos[modality] = VolumeInfo(
+            path=path,
+            original_shape=tuple(vol.shape),
+            processed_shape=tuple(vol_proc.shape),
+            voxel_spacing_mm=tuple(float(v) for v in header.get_zooms()[:3]),
+            affine=affine,
+        )
+
+    available = [m for m in MODALITY_ORDER if raw_vols.get(m) is not None]
+    missing = [m for m in MODALITY_ORDER if raw_vols.get(m) is None]
+
+    if case_shape is None:
+        case_shape = (64, 64, 64)
+
+    # Generate brain mask from first available raw volume
+    first_available_vol = next((raw_vols[m] for m in MODALITY_ORDER if raw_vols.get(m) is not None), None)
+    brain_mask = generate_brain_mask(first_available_vol, strategy=brain_mask_strategy) if first_available_vol is not None else None
+
+    return RawLoadResult(
+        raw_vols=raw_vols,
+        affine=first_affine,
+        ds_factor=float(ds_factor),
+        case_shape=case_shape,
+        available_modalities=available,
+        missing_modalities=missing,
+        per_modality_info=infos,
+        brain_mask=brain_mask,
+    )
+
+
+def apply_segmentation_preprocessing(
+    raw_vols: Dict[str, Optional[np.ndarray]],
+    case_shape: Tuple[int, int, int],
+    lower: float = 0.5,
+    upper: float = 99.9,
+) -> np.ndarray:
+    """Apply segmentation-style preprocessing (adaptive threshold + z-score)
+    to raw volumes and return a stacked (C, H, W, D) array.
+
+    This should be called AFTER synthesis has filled missing modalities
+    with synthesized raw-scale outputs.
+    """
+    vol_hwdc = np.zeros((*case_shape, 4), dtype=np.float32)
+    for i, modality in enumerate(MODALITY_ORDER):
+        vol = raw_vols.get(modality)
+        if vol is not None:
+            vol_hwdc[..., i] = vol
+
+    # Segmentation preprocessing: adaptive percentile threshold + z-score
+    vol_hwdc = adaptive_threshold_per_modality(vol_hwdc, lower_percentile=lower, upper_percentile=upper)
+    vol_hwdc = normalize_per_modality(vol_hwdc)
+
+    # (H, W, D, C) → (C, H, W, D)
+    stacked = vol_hwdc.transpose(3, 0, 1, 2).copy()
+    return stacked
+
+
+# ---------------------------------------------------------------------------
+# Legacy: full preprocess in one shot (used when NO synthesis is needed)
+# ---------------------------------------------------------------------------
 
 def preprocess_case(
     paths: Dict[str, str],

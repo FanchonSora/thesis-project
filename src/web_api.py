@@ -9,18 +9,17 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, Optional
 import numpy as np
+from preprocessing import build_modality_paths
+from run_pipeline import process_case
 import torch
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from .preprocessing import build_modality_paths
-from .run_pipeline import process_case
 logger = logging.getLogger("brain_api")
 logging.basicConfig(level=logging.INFO)
 APP_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = APP_ROOT.parent
-
 FRONTEND_ROOT = APP_ROOT / "web_data"
 DATA_ROOT = APP_ROOT / "web_data" / "uploads"
 OUTPUT_ROOT = APP_ROOT / "web_output"
@@ -40,11 +39,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.mount("/static", StaticFiles(directory=str(FRONTEND_ROOT)), name="static")
+app.mount("/js", StaticFiles(directory=str(APP_ROOT / "js")), name="js")
 JOBS: Dict[str, Dict[str, Any]] = {}
 JOBS_LOCK = Lock()
 PREVIEW_PLANES = ("axial", "coronal", "sagittal")
 DEFAULT_MESH_LOD = "low"
-
 def to_jsonable(obj: Any) -> Any:
     if isinstance(obj, dict):
         return {str(k): to_jsonable(v) for k, v in obj.items()}
@@ -145,6 +144,7 @@ def _build_status_payload(job_id: str, job: Dict[str, Any]) -> Dict[str, Any]:
 def _summary_from_report(job_id: str, report: Dict[str, Any]) -> Dict[str, Any]:
     paths = report.get("paths", {}) if isinstance(report, dict) else {}
     preview_paths = paths.get("preview_paths", {}) or {}
+    synthesis_preview_paths = paths.get("synthesis_preview_paths", {}) or {}
     mesh_paths = paths.get("mesh_paths", {}) or {}
     brain_mesh_paths = paths.get("brain_mesh_paths", {}) or {}
     wt_mesh_paths = paths.get("wt_mesh_paths", {}) or {}
@@ -184,6 +184,11 @@ def _summary_from_report(job_id: str, report: Dict[str, Any]) -> Dict[str, Any]:
             plane: f"/jobs/{job_id}/preview/{plane}"
             for plane in PREVIEW_PLANES
             if preview_paths.get(plane)
+        },
+        "synthesis_preview": {
+            mod: f"/jobs/{job_id}/synthesis_preview/{mod}"
+            for mod, p in synthesis_preview_paths.items()
+            if p
         },
         "viewer": {
             "default_lod": DEFAULT_MESH_LOD,
@@ -303,7 +308,7 @@ async def create_job(
     case_id: str = Form(...),
     enable_synthesis: bool = Form(True),
     generate_mesh: bool = Form(True),
-    syn_steps: int = Form(50),
+    syn_steps: int = Form(25),
     flair: UploadFile | None = File(default=None),
     t1: UploadFile | None = File(default=None),
     t1ce: UploadFile | None = File(default=None),
@@ -385,6 +390,17 @@ def get_preview(job_id: str, plane: str):
         raise HTTPException(status_code=404, detail="Preview not found")
     return FileResponse(preview_path, media_type="image/png")
 
+@app.get("/jobs/{job_id}/synthesis_preview/{modality}")
+def get_synthesis_preview(job_id: str, modality: str):
+    report = _ensure_job_report_loaded(job_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Job not found or not finished")
+    syn_paths = (report.get("paths") or {}).get("synthesis_preview_paths") or {}
+    syn_path = _safe_path(syn_paths.get(modality))
+    if syn_path is None:
+        raise HTTPException(status_code=404, detail=f"Synthesis preview for {modality} not found")
+    return FileResponse(syn_path, media_type="image/png")
+
 @app.get("/jobs/{job_id}/file/{kind}")
 def get_output_file(job_id: str, kind: str, lod: str = Query(DEFAULT_MESH_LOD)):
     report = _ensure_job_report_loaded(job_id)
@@ -422,5 +438,5 @@ def get_output_file(job_id: str, kind: str, lod: str = Query(DEFAULT_MESH_LOD)):
 if __name__ == "__main__":
     import uvicorn
     print("Starting Brain Tumor Analysis API server...")
-    print("Open your browser to: http://localhost:8000")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    print("Open your browser to: http://localhost:8001")
+    uvicorn.run(app, host="0.0.0.0", port=8001)

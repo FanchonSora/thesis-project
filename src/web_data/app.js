@@ -8,6 +8,8 @@ class BrainAnalysisApp {
         this.controls = null;
         this.mesh = null;
         this.regionGroup = null;
+        this.brainMeshObject = null;
+        this.gridBox = null;
         this.statusStartTime = null;
         this.pollTimer = null;
         this.reportData = null;
@@ -41,41 +43,85 @@ class BrainAnalysisApp {
     }
     loadThreeJSFromCDN() {
         return new Promise((resolve) => {
+            // Try loading from local files first
             const script = document.createElement('script');
-            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+            script.src = '/js/three.min.js';
             script.onload = () => {
-                console.log('THREE.js loaded from CDN');
+                console.log('THREE.js loaded from local');
 
                 const orbitScript = document.createElement('script');
-                orbitScript.src = 'https://cdn.jsdelivr.net/npm/three@r128/examples/js/controls/OrbitControls.js';
+                orbitScript.src = '/js/OrbitControls.js';
                 orbitScript.onload = () => {
-                    console.log('OrbitControls loaded from CDN');
+                    console.log('OrbitControls loaded from local');
 
                     const objLoaderScript = document.createElement('script');
-                    objLoaderScript.src = 'https://cdn.jsdelivr.net/npm/three@r128/examples/js/loaders/OBJLoader.js';
+                    objLoaderScript.src = '/js/OBJLoader.js';
                     objLoaderScript.onload = () => {
-                        console.log('OBJLoader loaded from CDN');
+                        console.log('OBJLoader loaded from local');
                         this.threeLoaded = true;
                         resolve();
                     };
                     objLoaderScript.onerror = () => {
-                        console.warn('Failed to load OBJLoader from CDN');
-                        resolve();
+                        console.warn('Failed to load OBJLoader from local, trying CDN');
+                        this.loadOBJLoaderFromCDN(resolve);
                     };
                     document.head.appendChild(objLoaderScript);
                 };
                 orbitScript.onerror = () => {
-                    console.warn('Failed to load OrbitControls from CDN');
-                    resolve();
+                    console.warn('Failed to load OrbitControls from local, trying CDN');
+                    this.loadOrbitControlsFromCDN(resolve);
                 };
                 document.head.appendChild(orbitScript);
             };
             script.onerror = () => {
-                console.warn('Failed to load THREE.js from CDN, will use fallback visualization');
-                resolve();
+                console.warn('Failed to load THREE.js from local, trying CDN');
+                this.loadFromCDN(resolve);
             };
             document.head.appendChild(script);
         });
+    }
+
+    loadFromCDN(resolve) {
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+        script.onload = () => {
+            console.log('THREE.js loaded from CDN');
+            this.loadOrbitControlsFromCDN(resolve);
+        };
+        script.onerror = () => {
+            console.warn('Failed to load THREE.js from CDN');
+            resolve();
+        };
+        document.head.appendChild(script);
+    }
+
+    loadOrbitControlsFromCDN(resolve) {
+        const orbitScript = document.createElement('script');
+        orbitScript.src = 'https://cdn.jsdelivr.net/npm/three@r128/examples/js/controls/OrbitControls.js';
+        orbitScript.onload = () => {
+            console.log('OrbitControls loaded from CDN');
+            this.loadOBJLoaderFromCDN(resolve);
+        };
+        orbitScript.onerror = () => {
+            console.warn('Failed to load OrbitControls from CDN');
+            this.loadOBJLoaderFromCDN(resolve);
+        };
+        document.head.appendChild(orbitScript);
+    }
+
+    loadOBJLoaderFromCDN(resolve) {
+        const objLoaderScript = document.createElement('script');
+        objLoaderScript.src = 'https://cdn.jsdelivr.net/npm/three@r128/examples/js/loaders/OBJLoader.js';
+        objLoaderScript.onload = () => {
+            console.log('OBJLoader loaded from CDN');
+            this.threeLoaded = true;
+            resolve();
+        };
+        objLoaderScript.onerror = () => {
+            console.warn('Failed to load OBJLoader from CDN');
+            resolve();
+        };
+        document.head.appendChild(objLoaderScript);
     }
     ensureOptionalUI() {
         const meshLod = document.getElementById('meshLod');
@@ -629,35 +675,63 @@ class BrainAnalysisApp {
         }
         try {
             this.scene = new THREE.Scene();
-            this.scene.background = new THREE.Color(0x1e293b);
+            this.scene.background = new THREE.Color(0x0f172a);
             const width = Math.max(container.clientWidth || 640, 320);
             const height = Math.max(container.clientHeight || 480, 240);
-            this.camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 10000);
+            this.camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 10000);
             this.camera.position.set(0, 0, 200);
             this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
             this.renderer.setSize(width, height);
             this.renderer.setPixelRatio(window.devicePixelRatio || 1);
+            this.renderer.sortObjects = true;
             container.appendChild(this.renderer.domElement);
             if (window.THREE.OrbitControls) {
                 this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
                 this.controls.enableDamping = true;
-                this.controls.dampingFactor = 0.05;
+                this.controls.dampingFactor = 0.08;
                 this.controls.enableZoom = true;
+                this.controls.autoRotate = true;
+                this.controls.autoRotateSpeed = 0.8;
             } else {
                 console.warn('OrbitControls not available');
             }
-            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+
+            // Ambient light for base illumination
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
             this.scene.add(ambientLight);
-            const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
-            directionalLight1.position.set(100, 100, 100);
+
+            // Hemisphere light for natural sky/ground lighting
+            const hemiLight = new THREE.HemisphereLight(0x88ccff, 0x444422, 0.4);
+            this.scene.add(hemiLight);
+
+            // Key light
+            const directionalLight1 = new THREE.DirectionalLight(0xffffff, 0.7);
+            directionalLight1.position.set(150, 200, 150);
             this.scene.add(directionalLight1);
-            const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.5);
-            directionalLight2.position.set(-100, -50, 80);
+
+            // Fill light
+            const directionalLight2 = new THREE.DirectionalLight(0x8899cc, 0.4);
+            directionalLight2.position.set(-100, -50, 100);
             this.scene.add(directionalLight2);
-            const gridHelper = new THREE.GridHelper(240, 12, 0x334155, 0x1f2937);
-            gridHelper.position.y = -70;
-            this.scene.add(gridHelper);
+
+            // Rim/back light for edge definition
+            const directionalLight3 = new THREE.DirectionalLight(0x6688cc, 0.3);
+            directionalLight3.position.set(0, -100, -150);
+            this.scene.add(directionalLight3);
+
             await this.reloadMeshForSelectedLod();
+
+            // Wire up brain toggle
+            const brainToggle = document.getElementById('brainToggle');
+            if (brainToggle && !brainToggle.dataset.bound) {
+                brainToggle.dataset.bound = 'true';
+                brainToggle.addEventListener('change', (e) => {
+                    if (this.brainMeshObject) {
+                        this.brainMeshObject.visible = e.target.checked;
+                    }
+                });
+            }
+
             const animate = () => {
                 this.animationFrameId = requestAnimationFrame(animate);
                 if (this.controls) this.controls.update();
@@ -673,6 +747,19 @@ class BrainAnalysisApp {
     }
     async reloadMeshForSelectedLod() {
         if (!this.scene) return;
+
+        // Remove existing brain mesh
+        if (this.brainMeshObject) {
+            this.scene.remove(this.brainMeshObject);
+            this.disposeObject(this.brainMeshObject);
+            this.brainMeshObject = null;
+        }
+        // Remove existing grid box
+        if (this.gridBox) {
+            this.scene.remove(this.gridBox);
+            this.gridBox = null;
+        }
+        // Remove existing region group
         const objectToRemove = this.regionGroup || this.mesh;
         if (objectToRemove) {
             this.scene.remove(objectToRemove);
@@ -680,6 +767,7 @@ class BrainAnalysisApp {
         }
         this.mesh = null;
         this.regionGroup = null;
+
         const regionUrls = this.getRegionMeshUrlsForLod(this.currentMeshLod);
         if (!regionUrls) {
             this.createPlaceholderGeometry('No region meshes available');
@@ -687,6 +775,15 @@ class BrainAnalysisApp {
         }
         await this.loadRegionMeshes(regionUrls);
     }
+
+    getBrainMeshUrlForLod(lod) {
+        if (!this.reportData) return null;
+        const requested = String(lod || 'low').toLowerCase();
+        const viewer = this.reportData.viewer;
+        if (!viewer || !viewer.brain) return null;
+        return viewer.brain[requested] || null;
+    }
+
     getRegionMeshUrlsForLod(lod) {
         if (!this.reportData) return null;
         const requested = String(lod || 'low').toLowerCase();
@@ -698,6 +795,45 @@ class BrainAnalysisApp {
             et: regions.et?.[requested] || null
         };
     }
+
+    createGridBox(size) {
+        // Create a wireframe grid cube as spatial reference (like the reference image)
+        const gridGroup = new THREE.Group();
+
+        const gridSize = size * 1.3;
+        const divisions = 8;
+        const gridColor = new THREE.Color(0x334455);
+
+        // Bottom grid
+        const bottomGrid = new THREE.GridHelper(gridSize, divisions, gridColor, gridColor);
+        bottomGrid.position.y = -gridSize / 2;
+        gridGroup.add(bottomGrid);
+
+        // Back grid (rotated)
+        const backGrid = new THREE.GridHelper(gridSize, divisions, gridColor, gridColor);
+        backGrid.rotation.x = Math.PI / 2;
+        backGrid.position.z = -gridSize / 2;
+        gridGroup.add(backGrid);
+
+        // Left grid (rotated)
+        const leftGrid = new THREE.GridHelper(gridSize, divisions, gridColor, gridColor);
+        leftGrid.rotation.z = Math.PI / 2;
+        leftGrid.position.x = -gridSize / 2;
+        gridGroup.add(leftGrid);
+
+        // Wireframe bounding box
+        const boxGeom = new THREE.BoxGeometry(gridSize, gridSize, gridSize);
+        const boxEdges = new THREE.EdgesGeometry(boxGeom);
+        const boxLine = new THREE.LineSegments(boxEdges, new THREE.LineBasicMaterial({
+            color: 0x445566,
+            transparent: true,
+            opacity: 0.4
+        }));
+        gridGroup.add(boxLine);
+
+        return gridGroup;
+    }
+
     async loadRegionMeshes(regionUrls) {
         try {
             if (!window.THREE || !window.THREE.OBJLoader) {
@@ -708,10 +844,52 @@ class BrainAnalysisApp {
             const group = new THREE.Group();
             const loader = new THREE.OBJLoader();
 
+            // ---- Load brain mesh first (transparent outer shell) ----
+            const brainUrl = this.getBrainMeshUrlForLod(this.currentMeshLod);
+            if (brainUrl) {
+                try {
+                    const brainResponse = await fetch(brainUrl);
+                    if (brainResponse.ok) {
+                        const brainText = await brainResponse.text();
+                        const brainObject = loader.parse(brainText);
+
+                        brainObject.traverse((child) => {
+                            if (child.isMesh) {
+                                child.material = new THREE.MeshPhongMaterial({
+                                    color: 0x44eeff,
+                                    emissive: 0x0a2233,
+                                    transparent: true,
+                                    opacity: 0.12,
+                                    depthWrite: false,
+                                    shininess: 30,
+                                    side: THREE.DoubleSide,
+                                    blending: THREE.NormalBlending,
+                                });
+                                child.renderOrder = 0;
+                            }
+                        });
+
+                        this.brainMeshObject = brainObject;
+                        this.scene.add(brainObject);
+
+                        // Sync with toggle state
+                        const brainToggle = document.getElementById('brainToggle');
+                        if (brainToggle) {
+                            brainObject.visible = brainToggle.checked;
+                        }
+                        console.log('Brain mesh loaded successfully');
+                    }
+                } catch (brainErr) {
+                    console.warn('Failed to load brain mesh:', brainErr);
+                }
+            }
+
+            // ---- Load tumor region meshes ----
+            // Ordered from outermost (WT) to innermost (ET) with increasing opacity
             const configs = [
-                { key: 'wt', color: 0x7ffcff, opacity: 0.28 },
-                { key: 'tc', color: 0xd78cff, opacity: 0.45 },
-                { key: 'et', color: 0xfff200, opacity: 0.85 }
+                { key: 'wt', color: 0x00e5ff, emissive: 0x003344, opacity: 0.22, shininess: 40, renderOrder: 1, name: 'Whole Tumor' },
+                { key: 'tc', color: 0xcc66ff, emissive: 0x220044, opacity: 0.50, shininess: 60, renderOrder: 2, name: 'Tumor Core' },
+                { key: 'et', color: 0xff4466, emissive: 0x330011, opacity: 0.85, shininess: 90, renderOrder: 3, name: 'Enhancing Tumor' }
             ];
 
             let loadedAny = false;
@@ -730,17 +908,21 @@ class BrainAnalysisApp {
                     if (child.isMesh) {
                         child.material = new THREE.MeshPhongMaterial({
                             color: cfg.color,
+                            emissive: cfg.emissive,
                             transparent: true,
                             opacity: cfg.opacity,
-                            depthWrite: false,
-                            shininess: 80,
-                            side: THREE.DoubleSide
+                            depthWrite: cfg.key === 'et',  // Only innermost writes depth
+                            shininess: cfg.shininess,
+                            side: THREE.DoubleSide,
+                            blending: THREE.NormalBlending,
                         });
+                        child.renderOrder = cfg.renderOrder;
                     }
                 });
 
                 group.add(object);
                 loadedAny = true;
+                console.log(`Loaded ${cfg.name} mesh`);
             }
 
             if (!loadedAny) {
@@ -751,7 +933,25 @@ class BrainAnalysisApp {
             this.regionGroup = group;
             this.mesh = group; // để các nút reset/center vẫn dùng lại logic cũ
             this.scene.add(group);
-            this.fitCameraToObject(group);
+
+            // Add spatial reference grid box based on the bounding box of all content
+            const allContent = new THREE.Group();
+            if (this.brainMeshObject) allContent.add(this.brainMeshObject.clone());
+            allContent.add(group.clone());
+            const box = new THREE.Box3().setFromObject(allContent);
+            if (!box.isEmpty()) {
+                const size = box.getSize(new THREE.Vector3());
+                const maxDim = Math.max(size.x, size.y, size.z);
+                const gridBox = this.createGridBox(maxDim);
+                const center = box.getCenter(new THREE.Vector3());
+                gridBox.position.copy(center);
+                this.gridBox = gridBox;
+                this.scene.add(gridBox);
+            }
+
+            // Fit camera to include brain + tumor
+            const fitTarget = this.brainMeshObject || group;
+            this.fitCameraToObject(fitTarget);
         } catch (error) {
             console.error('Error loading region meshes:', error);
             this.createPlaceholderGeometry(`Region mesh load error: ${error.message}`);
@@ -936,6 +1136,13 @@ class BrainAnalysisApp {
         if (this.controls) {
             this.controls.dispose();
             this.controls = null;
+        }
+        if (this.brainMeshObject) {
+            this.disposeObject(this.brainMeshObject);
+            this.brainMeshObject = null;
+        }
+        if (this.gridBox) {
+            this.gridBox = null;
         }
         const objectToDispose = this.regionGroup || this.mesh;
         if (objectToDispose) {
