@@ -1,0 +1,8 @@
+.git
+.venv
+__pycache__
+*.pyc
+src/web_data/uploads/
+src/web_output/
+test_samples/
+.DS_Store

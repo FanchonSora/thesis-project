@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  brain-tumor-api:
+    build: .
+    container_name: brain-tumor-api
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./src/web_data/uploads:/app/src/web_data/uploads
+      - ./src/web_output:/app/src/web_output
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

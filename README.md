@@ -1,281 +1,130 @@
-# Brain Tumor MRI Analysis Platform
+# Brain Tumor Segmentation & Synthesis Platform
 
-A comprehensive framework for multimodal brain MRI analysis, featuring automatic tumor segmentation, missing modality synthesis using conditional diffusion models, and interactive 3D visualization.
+Welcome to the **Brain Tumor Analysis Platform**, an advanced, full-stack pipeline designed to automate the segmentation and synthesis of MRI modalities for brain tumor analysis.
 
-## Overview
+This project uses Deep Learning (U-Net for segmentation, DDPM for synthesis) and a modern web interface to provide comprehensive 3D visual context for medical professionals and researchers.
 
-This project implements an end-to-end pipeline for brain tumor analysis from multimodal MRI scans (T1, T1CE, T2, FLAIR). The system can handle incomplete data by synthesizing missing modalities and provides both command-line and web-based interfaces for analysis and visualization.
+---
 
-### Key Features
+## 🌟 Key Features
 
-- **Multimodal Segmentation**: 3D UNet-based segmentation of brain tumors into clinically relevant regions (ET, TC, WT)
-- **Modality Synthesis**: Conditional diffusion models for reconstructing missing MRI sequences
-- **Preprocessing Pipeline**: Adaptive intensity normalization and patch-based training
-- **Web Interface**: Interactive upload, analysis, and 3D visualization
-- **REST API**: Programmatic access for integration
-- **Cross-Dataset Evaluation**: Trained on BraTS 2021, evaluated on BraTS 2023
+1. **Automated 3D Tumor Segmentation**
+   - Segments MRI into three sub-regions: Whole Tumor (WT), Tumor Core (TC), and Enhancing Tumor (ET).
+   - Generates high-quality 3D meshes for interactive visualization.
+   
+2. **Missing Modality Synthesis (Diffusion Models)**
+   - Automatically detects missing MRI modalities (among T1, T1ce, T2, FLAIR).
+   - Uses conditioned Denoising Diffusion Probabilistic Models (DDPM) to synthesize the missing scans before segmentation.
 
-## System Requirements
+3. **Advanced 3D Web Viewer**
+   - View 2D anatomical planes (axial, coronal, sagittal).
+   - Interactive 3D visualization using WebGL, showcasing a semi-transparent brain outer shell for exact anatomical context alongside the tumor sub-regions.
+   - Ground Truth (GT) upload and side-by-side comparison for evaluating predictions.
 
-- **OS**: Windows 10/11, Linux, or macOS
-- **Python**: 3.8-3.11
-- **GPU**: NVIDIA GPU with CUDA 11.0+ (recommended for training/synthesis)
-- **RAM**: 16GB+ (32GB recommended)
-- **Storage**: 50GB+ for datasets and models
+4. **SOLID API Architecture**
+   - Built with **FastAPI** for high performance.
+   - Clean, modular backend separating routing, job management, file handling, and ML pipelines.
 
-## Installation
+---
 
-### 1. Clone Repository
+## 🏗️ Project Architecture
 
-```bash
-git clone https://github.com/your-repo/brain-tumor-analysis.git
-cd brain-tumor-analysis
+```text
+thesis-project/
+├── Dockerfile                  # Container definition for the web API
+├── docker-compose.yml          # Docker Compose for easy deployment
+├── start_web.sh                # Shell script to start the service natively
+├── TRAINING_WORKFLOW.md        # Detailed guide on training the synthesis DDPM models
+├── configs/                    # YAML Configurations for models and training
+├── models/                     # Deep Learning Model weights
+│   ├── segmentation_module/    # U-Net weights for Tumor Segmentation
+│   └── synthesis_module/       # DDPM weights for MRI Modality Synthesis
+└── src/                        # Main Application Code
+    ├── web_api.py              # Main FastAPI application entry point
+    ├── run_pipeline.py         # Entry point for the core ML segmentation pipeline
+    ├── preprocessing.py        # Z-score normalization for segmentation
+    ├── synthesis.py            # Synthesis diffusion model inference
+    ├── synthesis_preprocess.py # Percentile normalization for synthesis
+    ├── segmentation.py         # U-Net inference wrapper
+    ├── mesh_export.py          # Marching cubes and decimation for 3D meshes
+    ├── core/                   # Refactored SOLID API modules
+    │   ├── config.py           # Path configurations and constants
+    │   ├── job_manager.py      # Thread-safe async job state management
+    │   ├── pipeline_runner.py  # Ties the API to run_pipeline.py
+    │   ├── report_builder.py   # Formats pipeline outputs to JSON payloads
+    │   ├── file_handler.py     # Safely saves uploads and resolves paths
+    │   └── utils.py            # Generic helpers (e.g., JSON encoders)
+    └── web_data/               # Frontend Assets (HTML, CSS, JS)
 ```
 
-### 2. Create Virtual Environment
+---
 
-```bash
-python -m venv .venv
-# On Windows
-.venv\Scripts\activate
-# On Linux/macOS
-source .venv/bin/activate
-```
+## 🚀 Getting Started
 
-### 3. Install Dependencies
+### Prerequisites
 
-```bash
-pip install -r requirements.txt
-```
+- **OS:** Linux / Windows (WSL2 recommended)
+- **GPU:** NVIDIA GPU with at least 8GB VRAM (CUDA 11.8+ supported)
+- **Docker:** If running via containers (requires `nvidia-container-toolkit`)
 
-For GPU support, install PyTorch with CUDA:
+### Option 1: Quick Start via Docker (Recommended)
 
-```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-```
-
-### 4. Download Models
-
-Download pre-trained models and place them in the appropriate directories:
-
-- Segmentation model: `models/segmentation_module/model-weight/final_model_unet.pth`
-- Synthesis models: `models/synthesis_module/models/` (4 model files)
-
-## Project Structure
-
-```
-├── configs/                 # Configuration files
-│   ├── pipeline_config.yaml
-│   └── synthesis-models/    # Synthesis model configs
-├── models/                  # Pre-trained models
-│   ├── segmentation_module/
-│   └── synthesis_module/
-├── src/                     # Source code
-│   ├── run_pipeline.py      # Main pipeline script
-│   ├── web_api.py          # Web API server
-│   ├── preprocessing.py    # Data preprocessing
-│   ├── models/
-│   │   └── unet3d.py       # Segmentation model
-│   ├── visualize/
-│   └── web_data/           # Web interface files
-├── results/                 # Output directory
-└── README.md               # This file
-```
-
-## Usage
-
-### Command Line Interface
-
-#### Basic Segmentation
-
-```bash
-python src/run_pipeline.py \
-  --case-id BraTS-GLI-00001-000 \
-  --input-dir /path/to/brats/data \
-  --out-dir ./results
-```
-
-#### With Synthesis (Missing Modalities)
-
-```bash
-python src/run_pipeline.py \
-  --case-id BraTS-GLI-00001-000 \
-  --input-dir /path/to/brats/data \
-  --out-dir ./results \
-  --syn-w models/synthesis_module/models
-```
-
-#### Full Options
-
-```bash
-python src/run_pipeline.py --help
-```
-
-### Web Interface
-
-#### Start Server
-
-```bash
-python src/web_api.py
-```
-
-Server will start at `http://localhost:8000`
-
-#### Web Usage
-
-1. Open browser to `http://localhost:8000`
-2. Upload MRI files (T1, T1CE, T2, FLAIR in .nii or .nii.gz format)
-3. Enter case ID
-4. Click "Analyze" to start processing
-5. View results:
-   - 2D slices with segmentation overlay
-   - 3D brain visualization
-   - Volume measurements
-   - Download reports and meshes
-
-### REST API
-
-#### Start API Server
-
-```bash
-uvicorn src.web_api:app --host 0.0.0.0 --port 8000
-```
-
-#### API Endpoints
-
-- `POST /analyze`: Submit analysis job
-- `GET /jobs/{job_id}/status`: Check job status
-- `GET /jobs/{job_id}/results`: Get results summary
-- `GET /jobs/{job_id}/file/{type}`: Download files
-
-## Data Format
-
-### Input Data
-
-- **Format**: NIfTI (.nii or .nii.gz)
-- **Modalities**: T1, T1CE, T2, FLAIR
-- **Naming**: Standard BraTS convention (e.g., `BraTS-GLI-00001-000-t1.nii.gz`)
-- **Resolution**: 1mm³ isotropic (automatically resampled if needed)
-
-### Directory Structure
-
-```
-input_directory/
-├── BraTS-GLI-00001-000/
-│   ├── BraTS-GLI-00001-000-t1.nii.gz
-│   ├── BraTS-GLI-00001-000-t1ce.nii.gz
-│   ├── BraTS-GLI-00001-000-t2.nii.gz
-│   └── BraTS-GLI-00001-000-flair.nii.gz
-└── ...
-```
-
-## Modules
-
-### Segmentation Module
-
-- **Architecture**: 3D UNet with residual SE blocks and attention gates
-- **Input**: 4-channel multimodal MRI (64×64×64 patches)
-- **Output**: Voxel-wise tumor segmentation (4 classes)
-- **Training**: Patch-based with tumor-focused sampling
-
-### Synthesis Module
-
-- **Architecture**: Conditional diffusion models (DDPM)
-- **Purpose**: Synthesize missing modalities from available ones
-- **Models**: 4 separate models (one for each target modality)
-- **Input**: 3 modalities → Output: 1 synthesized modality
-
-### Visualization Module
-
-- **2D Views**: Axial, coronal, sagittal slices with overlays
-- **3D Views**: Interactive brain mesh with tumor regions
-- **Formats**: PNG images, OBJ meshes, JSON reports
-
-## Training
-
-### Segmentation Model
-
-```bash
-# Requires BraTS 2021 training data
-python train_segmentation.py --config configs/segmentation_config.yaml
-```
-
-### Synthesis Models
-
-```bash
-cd models/synthesis_module
-bash scripts/train_all_modalities.sh 5000 2
-```
-
-## Evaluation
-
-### Metrics
-
-- **Dice Score**: ET, TC, WT regions
-- **Hausdorff Distance**: Boundary accuracy
-- **Volume Correlation**: Size estimation
-
-### Cross-Dataset Validation
-
-- Train: BraTS 2021 (1251 cases)
-- Test: BraTS 2021 held-out (20%) + BraTS 2023 (219 cases)
-
-## Troubleshooting
-
-### Common Issues
-
-1. **CUDA Out of Memory**
-   - Reduce batch size in configs
-   - Use CPU mode: `--device cpu`
-   - Enable gradient checkpointing
-
-2. **Missing Dependencies**
+1. Ensure you have Docker and Docker Compose installed.
+2. Build and spin up the container:
    ```bash
-   pip install -r requirements.txt --upgrade
+   docker-compose up -d --build
    ```
+3. The platform will be running at [http://localhost:8001](http://localhost:8001).
 
-3. **Model Loading Errors**
-   - Verify model file paths
-   - Check PyTorch version compatibility
+### Option 2: Native Setup
 
-4. **Web Interface Issues**
-   - Clear browser cache
-   - Check console for JavaScript errors
-   - Ensure port 8000 is available
+1. Create a Python Virtual Environment:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+2. Install PyTorch (ensure your CUDA version matches):
+   ```bash
+   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+   ```
+3. Install project dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+4. Start the server:
+   ```bash
+   ./start_web.sh
+   # Or manually: python src/web_api.py
+   ```
+5. Open your browser to [http://localhost:8001](http://localhost:8001).
 
-### Performance Tips
+---
 
-- Use GPU for faster inference
-- Process cases individually for memory efficiency
-- Use lower LOD for 3D visualization on slower machines
+## 🖥️ Using the Platform
 
-## Contributing
+1. **Upload MRI Scans**: On the homepage, enter a unique Case ID. Upload any combination of `FLAIR`, `T1`, `T1ce`, and `T2` NIfTI (`.nii.gz`) files.
+2. **Synthesis Toggle**: If any modalities are missing, ensure "Enable Modality Synthesis" is turned on.
+3. **Submit**: Click **Run Analysis**. The server will process the files in the background.
+4. **View Results**: Once completed, the UI will update to show 2D slices. Click "View 3D Model" to enter the 3D Viewer.
+5. **Ground Truth Comparison**: Inside the 3D viewer, you can upload a Ground Truth segmentation `.nii.gz` to automatically generate side-by-side 3D comparisons.
 
-1. Fork the repository
-2. Create feature branch: `git checkout -b feature/new-feature`
-3. Commit changes: `git commit -am 'Add new feature'`
-4. Push to branch: `git push origin feature/new-feature`
-5. Submit pull request
+---
 
-## License
+## 🧠 Training & Model Modification
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+If you wish to re-train the models or modify the Deep Learning architecture:
 
-## Citation
+- Refer to the [**TRAINING_WORKFLOW.md**](TRAINING_WORKFLOW.md) for a comprehensive A-Z guide on setting up the BraTS dataset, configuring hyperparameters, and executing the `train_brats.py` script for all diffusion models.
+- Deep learning scripts for synthesis are stored in `models/synthesis_module/`.
 
-If you use this work in your research, please cite:
+---
 
-```
-@thesis{your_thesis,
-  title={Brain Tumor Analysis from Multimodal MRI using Deep Learning},
-  author={Your Name},
-  year={2024},
-  school={Your University}
-}
-```
+## 🛠️ Codebase Design Notes (SOLID)
 
-## Contact
+The backend (`src/`) has been heavily refactored to conform to **SOLID principles**, specifically the **Single Responsibility Principle**. 
 
-For questions or issues:
-- Open GitHub issue
-- Email: your.email@example.com
+- The main API endpoint (`src/web_api.py`) is clean and delegative.
+- Business logic (executing ML models) is separated from state management (`JobManager`) and data serialization (`ReportBuilder`).
+- Preprocessing steps for Synthesis (Percentile) and Segmentation (Z-Score) are explicitly isolated in different files to prevent data-leakage or configuration mismatch. 
+
+Enjoy exploring and extending the Brain Tumor Segmentation Platform!
