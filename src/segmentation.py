@@ -123,15 +123,45 @@ def run_segmentation(
     return pred
 
 def post_process(seg: np.ndarray, brain_mask: Optional[np.ndarray] = None, min_size: int = 100) -> np.ndarray:
-    from scipy.ndimage import label as nd_label
+    import scipy.ndimage as ndimage
+    
     out = seg.copy()
-    for cls in np.unique(out):
-        if int(cls) == 0:
-            continue
-        labeled, num = nd_label(out == cls)
-        for i in range(1, num + 1):
-            if int((labeled == i).sum()) < min_size:
-                out[labeled == i] = 0
+
+    # 1. Lọc nhiễu bên ngoài bằng Largest Connected Component (LCC) cho Whole Tumor (WT)
+    # Loại bỏ các mảnh vỡ nhỏ lẻ loi khỏi khối u chính.
+    wt_mask = out > 0
+    labeled_wt, num_features = ndimage.label(wt_mask)
+    if num_features > 0:
+        sizes = ndimage.sum(wt_mask, labeled_wt, range(1, num_features + 1))
+        largest_component_id = np.argmax(sizes) + 1
+        # Set background for everything outside the largest WT mass
+        out[labeled_wt != largest_component_id] = 0
+
+    # Cập nhật lại WT mask sau khi lọc
+    wt_mask = out > 0
+
+    # 2. Làm mịn biên và lấp lỗ hổng (Morphological Closing & Fill Holes)
+    # Khắc phục tình trạng "xấu", răng cưa và lỗ hổng bên trong của ảnh segmentation.
+    struct_elem = ndimage.generate_binary_structure(3, 1) # 3D cross structure
+    smoothed_wt = ndimage.binary_closing(wt_mask, structure=struct_elem, iterations=2)
+    smoothed_wt = ndimage.binary_fill_holes(smoothed_wt)
+    
+    # Những pixel được lấp đầy (hỗ hổng/lõm) sẽ được gán mặc định là vùng Edema (label 2)
+    new_pixels = smoothed_wt & (~wt_mask)
+    out[new_pixels] = 2
+
+    # 3. Xử lý các vùng Enhancing Tumor (ET - label 3) quá nhỏ
+    # Theo rule chuẩn của BraTS, nếu ET quá nhỏ (false positive), ta gán nó về Necrotic Core (label 1)
+    # thay vì xóa hẳn (biến thành background 0) gây rỗng khối u.
+    et_mask = out == 3
+    labeled_et, num_et = ndimage.label(et_mask)
+    if num_et > 0:
+        for i in range(1, num_et + 1):
+            if int((labeled_et == i).sum()) < min_size:
+                out[labeled_et == i] = 1
+
+    # 4. Áp dụng Brain Mask (nếu có) để đảm bảo không lan ra ngoài não
     if brain_mask is not None and brain_mask.shape == out.shape:
         out[brain_mask == 0] = 0
+
     return out.astype(np.uint8)
