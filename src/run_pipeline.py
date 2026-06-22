@@ -105,6 +105,13 @@ def process_case(
             LOGGER.info("[syn] synthesis_status=%s", synthesis.status)
 
             # Merge: 3 original raw + synthesized outputs into a complete raw_vols dict
+            # ====================================================================
+            # Combine original modalities with synthesized outputs to create complete dataset
+            # This ensures that:
+            #   - Original modalities are used as-is (preserve real data fidelity)
+            #   - Missing modalities are filled by synthesis predictions
+            #   - No modality has None value (safety fallback to zeros if needed)
+            
             complete_raw_vols = {}
             for mod in MODALITY_ORDER:
                 if raw_result.raw_vols.get(mod) is not None:
@@ -118,6 +125,11 @@ def process_case(
                     complete_raw_vols[mod] = np.zeros(raw_result.case_shape, dtype=np.float32)
 
             # Stage 3: Apply segmentation preprocessing to all 4 modalities
+            # ====================================================================
+            # Normalize the combined dataset (original + synthesized) for neural network input
+            # Segmentation model expects z-score normalized data with consistent intensity ranges
+            # This step applies percentile clipping and z-score normalization to all 4 modalities
+            
             LOGGER.info("[3/4] Applying segmentation preprocessing (z-score) to all 4 modalities")
             stacked = apply_segmentation_preprocessing(
                 raw_vols=complete_raw_vols,
@@ -172,40 +184,90 @@ def process_case(
                 LOGGER.info("[syn] Skipped. Reason: %s", synthesis.error)
 
         # Stage 3 (continued): Segmentation
+        # ====================================================================
+        # Run the trained 3D U-Net neural network to predict tumor segmentation
+        # The model predicts per-voxel labels: background=0, necrotic=1, edema=2, enhancing=3
+        
         LOGGER.info("[3/4] Segmentation")
         model, _ = load_trained_model(seg_w)
         pred_raw = run_segmentation(model, stacked, device=device, roi=roi)
         del model
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        
+        # Post-processing: Refine raw segmentation output
+        # ====================================================================
+        # Apply morphological algorithms to clean up neural network predictions:
+        #   1. Largest Connected Component (LCC): Remove noise fragments isolated from main tumor
+        #   2. Morphological Closing: Smooth jagged tumor boundaries
+        #   3. Fill Holes: Fill internal cavities (label as edema)
+        #   4. Small ET Filter: Reclassify tiny enhancing tumor regions to necrotic core
+        #   5. Brain Mask: Zero out voxels outside the brain boundary
+        # Result: Anatomically coherent tumor segmentation
+        
         pred_post = post_process(pred_raw, brain_mask=brain_mask, min_size=post_min_size)
         # Stage 4: Save outputs
+        # ====================================================================
+        # Generate and save all outputs from the segmentation pipeline:
+        #   - NIfTI volumes (raw + post-processed predictions)
+        #   - 2D preview images for visual inspection
+        #   - 3D mesh models of tumor regions (multiple LOD levels)
+        #   - Volume metrics (voxel counts and mm³ measurements)
+        #   - JSON report with comprehensive metadata and results
+        
         LOGGER.info("[4/4] Saving outputs")
         # NIfTI predictions
         pred_raw_path = str(case_out / f"{case_id}_pred_raw.nii.gz")
         pred_post_path = str(case_out / f"{case_id}_pred_post.nii.gz")
         pred_compat_path = str(case_out / f"{case_id}_pred.nii.gz")
+        
+        # Save raw (unprocessed) and post-processed segmentation volumes in NIfTI format
+        # NIfTI includes affine transformation matrix for correct alignment in medical imaging software
         if config.save_raw_prediction:
             save_nifti(pred_raw_path, pred_raw, affine)
         if config.save_post_prediction:
             save_nifti(pred_post_path, pred_post, affine)
             save_nifti(pred_compat_path, pred_post, affine)
-        # Preview images
+        
+        # Preview images: 2D slices from post-processed segmentation
+        # Used for quick visual inspection of segmentation quality
         base_volume = stacked[0] if stacked.ndim == 4 else np.asarray(stacked)
         preview_paths = save_preview_images(case_id, case_out, pred_post, base_volume)
+        
+        # Synthesis preview: Compare synthesized vs. original modalities (if synthesis was performed)
         synthesis_preview_paths = save_synthesis_previews(
             case_id, case_out, stacked, missing_flags, synthesis.status,
         )
-        # Meshes
+        
+        # 3D mesh generation: Export tumor regions as polygon meshes at multiple LOD (Level of Detail)
+        # LOD levels: low (fewest triangles, fastest), medium, high (most detail)
+        # Multiple mesh types:
+        #   - WT (Whole Tumor): all tumor voxels (labels 1+2+3)
+        #   - TC (Tumor Core): core region (labels 1+3, excluding edema)
+        #   - ET (Enhancing Tumor): only the enhancing/active tumor region (label 3)
+        
         empty_lods = {"low": None, "medium": None, "high": None}
         mesh_paths = export_wt_mesh_lods(pred_post, str(case_out / f"{case_id}_wt")) if generate_mesh else dict(empty_lods)
         brain_mesh_paths = export_brain_mesh_lods(brain_mask, str(case_out / f"{case_id}_brain")) if generate_mesh else dict(empty_lods)
         wt_mesh_paths = export_wt_mesh_lods(pred_post, str(case_out / f"{case_id}_wt_region")) if generate_mesh else dict(empty_lods)
         tc_mesh_paths = export_tc_mesh_lods(pred_post, str(case_out / f"{case_id}_tc_region")) if generate_mesh else dict(empty_lods)
         et_mesh_paths = export_et_mesh_lods(pred_post, str(case_out / f"{case_id}_et_region")) if generate_mesh else dict(empty_lods)
-        # Volume metrics
+        
+        # Compute region volumes in voxels and mm³
+        # Volumes are calculated for each tumor sub-region based on voxel counts and voxel spacing
         voxel_counts, mm3 = compute_region_volumes(pred_post, affine)
-        # Build result
+        # Build comprehensive result object with all processing artifacts and metadata
+        # ====================================================================
+        # The result includes:
+        #   - File paths: segmentation volumes, meshes, images, reports
+        #   - Segmentation outputs: raw and post-processed predictions
+        #   - Missing modality flags: which modalities had to be synthesized
+        #   - Synthesis status: success, fallback to mean, or skipped
+        #   - Volume measurements: tumor region sizes in voxels and physical units (mm³)
+        #   - Preprocessing metadata: downsampling factor, affine matrix, per-modality info
+        #   - Configuration: all pipeline parameters used
+        #   - Errors: any warnings or failures encountered
+        
         result = PipelineResult(
             case_id=case_id,
             status="completed",

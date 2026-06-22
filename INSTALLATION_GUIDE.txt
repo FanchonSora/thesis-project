@@ -1,0 +1,102 @@
+INSTALLATION, USAGE, AND MODEL TRAINING GUIDE
+Brain Tumor Analysis Platform
+
+--- IMPORTANT NOTE REGARDING SOURCE CODE AND VIDEO DEMO ---
+- Source code: The source code has been cleaned up, clearly structured, unnecessary files/data have been removed, and it is guaranteed to be fully executable. This source code corresponds entirely to the content presented in the report/thesis. All described functionalities have been implemented.
+- Video demo: The video demo focuses solely on presenting the implemented functionalities on the interface and the usage of the predictive model (inference). The training process, due to its high time and resource consumption, is not recorded in the video; instead, the steps to reproduce the models are detailed in Part IV of this document.
+
+=======================================================
+PART I: PREREQUISITES
+=======================================================
+- Operating System: Linux or Windows (WSL2 recommended on Windows).
+- Hardware: NVIDIA GPU with at least 8GB VRAM (CUDA 11.8+ supported). 12GB+ VRAM is recommended for model training.
+- Software: Docker and Docker Compose (If running via container, `nvidia-container-toolkit` is required), Python 3.9+.
+
+=======================================================
+PART II: INSTALLATION AND STARTUP GUIDE (INFERENCE)
+=======================================================
+Method 1: Installation via Docker (Recommended)
+Step 1: Ensure Docker, Docker Compose, and nvidia-container-toolkit are installed on your computer.
+Step 2: Open a terminal at the project's root directory (where docker-compose.yml is located).
+Step 3: Run the following command to automatically build and start the system:
+    docker-compose up -d --build
+Step 4: Open a web browser and navigate to: http://localhost:8001
+
+Method 2: Direct Installation (Native Setup)
+Step 1: Open a terminal at the project's root directory and create a Python virtual environment:
+    python -m venv .venv
+Step 2: Activate the virtual environment:
+    - Linux/MacOS: source .venv/bin/activate
+    - Windows: .venv\Scripts\activate
+Step 3: Install the PyTorch library (CUDA 11.8 version):
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+Step 4: Install other dependencies:
+    pip install -r requirements.txt
+Step 5: Start the FastAPI server:
+    ./start_web.sh 
+    (Or run manually: python src/web_api.py)
+Step 6: Access the web application at: http://localhost:8001
+
+=======================================================
+PART III: BASIC USAGE GUIDE (WEB INTERFACE)
+=======================================================
+Step 1: Upload Data: On the homepage, enter the Case ID (Patient ID). Upload the NIfTI format (.nii.gz) files for T1, T1ce, T2, and FLAIR modalities.
+Step 2: Synthesis: If the patient is missing any of the above modalities, toggle "Enable Modality Synthesis" to let the model automatically generate the missing modality from the remaining ones.
+Step 3: Analyze: Click the "Run Analysis" button to run the background predictive pipeline.
+Step 4: View Results: Click "View 3D Model" to open the interactive 3D space to view cross-sections and tumor structures.
+Step 5: Evaluate: In the 3D space, upload the standard Ground Truth file to visually compare against the model's predictions.
+
+=======================================================
+PART IV: TRAINING AND MODEL REPRODUCTION GUIDE
+=======================================================
+The project consists of 2 main models: The Segmentation Model and the Synthesis Model. The training processes for both are completely separated in their respective directories inside the `models/` directory.
+
+IV.1. Training the Segmentation Module (Enhanced U-Net)
+The Segmentation model (Enhanced UNet) is located at `models/segmentation_module/` and is primarily trained through the Jupyter Notebook environment (`unet-novel.ipynb`), with evaluation segmentation and 3D reconstruction measurements tasks via `unet-novel-eval.ipynb`.
+1. Environment Setup:
+- Ensure the Python environment has the `monai`, `torch`, `nibabel` libraries and other basic libraries listed in the first setup cell of the notebook.
+2. Data:
+- Open the file `models/segmentation_module/unet-novel.ipynb`.
+- Find the `TRAIN_DATASET_PATH` variable and change this path to point to the directory containing the extracted BraTS2021 dataset on your machine (e.g., `/path/to/BraTS2021_Training_Data/`).
+3. Proceed with Training:
+- Run all cells (Run All) sequentially in the `unet-novel.ipynb` file.
+- The execution process will automatically read NIfTI data, perform Data Augmentation using the MONAI library, and calculate a custom combined Loss function (Dice Loss + CrossEntropy).
+- Visual charts such as the Loss curve and Dice score will be plotted and displayed directly in the notebook's output for each Epoch (Standard configuration from the report: Train for 100 Epochs, Batch size: 6 patches, Optimizer: AdamW, Learning Rate: 1e-4, Mixed Precision FP16).
+- Upon completion, the weights of the best model (best weights) will be saved directly into the `models/segmentation_module/model-weight/` directory.
+
+IV.2. Training the Synthesis Module (Diffusion)
+The Synthesis model (Diffusion) is located in the `models/synthesis_module/` directory and is trained via dedicated bash/python scripts.
+1. Environment & Data Preparation:
+- Environment: Ensure the Python virtual environment is activated.
+- BraTS2021 Data: Open the terminal, navigate to the module directory:
+    cd models/synthesis_module
+    Run the command to preprocess and crop images from the raw source into the standard dataset directory:
+    python prepare_brats_dataset.py --source /path/to/BRATS2021/source --output dataset --modalities t1,t1ce,t2,flair
+- Split Dataset (Train/Val/Test): Generate the data split config file (e.g., brats_split.json) using the `make_split_case_lists` function in `dataset_brats.py`.
+
+2. Proceed with Training:
+The system uses 4 specialized models to generate each missing modality type. To automatically train all 4 models sequentially:
+    bash scripts/train_all_modalities.sh
+
+*If you want to manually train for 1 modality type (Example: train to automatically synthesize T1 from T1ce, T2, FLAIR):
+    python train_brats.py \
+      --task 3to1 \
+      --data_root dataset \
+      --cond_modalities "t1ce,t2,flair" \
+      --target_modality "t1" \
+      --epochs 50000 \
+      --batchsize 2 \
+      --save_and_sample_every 1000 \
+      --train_lr 2e-5 \
+      --with_condition
+
+3. Process Monitoring:
+Open a new terminal and run the TensorBoard command to view the Loss function as well as the generated image samples over each cycle:
+    tensorboard --logdir=results_brats/logs --port=6006
+    Access the web browser at http://localhost:6006 for visualization.
+
+4. Storage and Model Integration:
+- Model weights: Will be saved as `.pt` format files (~500MB size) in the `models/` directory of the training system.
+- Integration: Once the weight models for both `segmentation_module` and `synthesis_module` are fully available, simply copy these weight files to the corresponding structure in the web project (or modify the paths in the `configs/pipeline_config.yaml` file). The web-server system (FastAPI) will automatically load all these weights to make predictions and analyze during Inference.
+
+ADDITIONAL NOTE: If you encounter an out of memory error (CUDA Out of Memory) while running Synthesis, run the script with a smaller batch size option (`--batchsize 1`) or reduce the spatial dimension size (`--input_size`).

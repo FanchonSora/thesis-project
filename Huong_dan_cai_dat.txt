@@ -1,0 +1,102 @@
+HƯỚNG DẪN CÀI ĐẶT, SỬ DỤNG VÀ HUẤN LUYỆN MÔ HÌNH
+Nền tảng Phân tích và Phân vùng Khối u Não (Brain Tumor Analysis Platform)
+
+--- LƯU Ý QUAN TRỌNG ĐỐI VỚI SOURCE CODE VÀ VIDEO DEMO ---
+- Mã nguồn: Mã nguồn đã được dọn dẹp, cấu trúc rõ ràng, loại bỏ các file/data không cần thiết và đảm bảo chạy được hoàn chỉnh. Mã nguồn này tương ứng hoàn toàn với nội dung trình bày trong báo cáo thực tập/đồ án. Tất cả các chức năng được mô tả đều đã được hiện thực.
+- Video demo: Video demo chỉ tập trung trình bày các chức năng đã hiện thực trên giao diện và phần sử dụng mô hình dự đoán (inference). Quá trình huấn luyện (training) do tốn nhiều thời gian và tài nguyên nên không được quay trong video, thay vào đó các bước tái tạo mô hình được mô tả chi tiết tại Phần IV của tài liệu này.
+
+=======================================================
+PHẦN I: YÊU CẦU HỆ THỐNG (Prerequisites)
+=======================================================
+- Hệ điều hành: Linux hoặc Windows (Khuyến nghị sử dụng WSL2 trên Windows).
+- Phần cứng: Card đồ họa (GPU) NVIDIA với dung lượng VRAM ít nhất 8GB (Hỗ trợ CUDA 11.8 trở lên). Khuyến nghị VRAM từ 12GB trở lên cho quá trình huấn luyện mô hình (training).
+- Phần mềm: Docker và Docker Compose (Nếu chạy qua container, yêu cầu cài đặt thêm `nvidia-container-toolkit`), Python 3.9+.
+
+=======================================================
+PHẦN II: HƯỚNG DẪN CÀI ĐẶT VÀ KHỞI CHẠY (INFERENCE)
+=======================================================
+Phương pháp 1: Cài đặt qua Docker (Khuyên dùng)
+Bước 1: Đảm bảo máy tính đã được cài đặt Docker, Docker Compose và nvidia-container-toolkit.
+Bước 2: Mở terminal tại thư mục gốc của project (chứa file docker-compose.yml).
+Bước 3: Chạy lệnh sau để tự động build và khởi động hệ thống:
+    docker-compose up -d --build
+Bước 4: Mở trình duyệt web và truy cập: http://localhost:8001
+
+Phương pháp 2: Cài đặt trực tiếp (Native Setup)
+Bước 1: Mở terminal tại thư mục gốc của project và tạo môi trường ảo Python:
+    python -m venv .venv
+Bước 2: Kích hoạt môi trường ảo:
+    - Linux/MacOS: source .venv/bin/activate
+    - Windows: .venv\Scripts\activate
+Bước 3: Cài đặt thư viện PyTorch (phiên bản CUDA 11.8):
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+Bước 4: Cài đặt các thư viện phụ thuộc:
+    pip install -r requirements.txt
+Bước 5: Khởi động server FastAPI:
+    ./start_web.sh 
+    (Hoặc chạy thủ công: python src/web_api.py)
+Bước 6: Truy cập web tại: http://localhost:8001
+
+=======================================================
+PHẦN III: HƯỚNG DẪN SỬ DỤNG CƠ BẢN (GIAO DIỆN WEB)
+=======================================================
+Bước 1: Tải lên dữ liệu: Tại trang chủ, nhập Case ID (Mã bệnh nhân). Tải lên các định dạng NIfTI (.nii.gz) của các ảnh T1, T1ce, T2, FLAIR.
+Bước 2: Sinh ảnh (Synthesis): Nếu bệnh nhân bị thiếu một trong các ảnh trên, bật tùy chọn "Enable Modality Synthesis" để mô hình tự động sinh ra các ảnh khuyết từ các ảnh còn lại.
+Bước 3: Phân tích: Nhấn nút "Run Analysis" để chạy quá trình pipeline dự đoán nền.
+Bước 4: Xem kết quả: Nhấn "View 3D Model" để mở không gian 3D tương tác xem các mặt cắt và cấu trúc khối u.
+Bước 5: Đánh giá: Trong không gian 3D, tải lên file Ground Truth chuẩn để so sánh đối chiếu với kết quả dự đoán của mô hình.
+
+=======================================================
+PHẦN IV: HƯỚNG DẪN HUẤN LUYỆN (TRAINING) VÀ TÁI TẠO MÔ HÌNH
+=======================================================
+Dự án bao gồm 2 mô hình chính: Mô hình Phân vùng (Segmentation) và Mô hình Sinh ảnh (Synthesis). Quá trình huấn luyện cho cả 2 được tách biệt hoàn toàn trong các thư mục tương ứng bên trong thư mục `models/`.
+
+IV.1. Huấn luyện mô hình Phân vùng (Segmentation Module)
+Mô hình Segmentation (Enhaced UNet) được đặt tại `models/segmentation_module/` và được huấn luyện chủ yếu thông qua môi trường Jupyter Notebook (`unet-novel.ipynb`) và đo lường hai đánh giá phân đoạn và tái tạo 3D qua (`unet-novel-eval.ipynb`)
+1. Cài đặt môi trường:
+- Đảm bảo môi trường Python đã có thư viện `monai`, `torch`, `nibabel` và các thư viện cơ bản trong cell cài đặt đầu tiên của notebook.
+2. Dữ liệu:
+- Mở file `models/segmentation_module/unet-novel.ipynb`.
+- Tìm biến `TRAIN_DATASET_PATH` và thay đổi đường dẫn này trỏ tới thư mục chứa dữ liệu BraTS2021 đã giải nén trên máy của bạn (VD: `/path/to/BraTS2021_Training_Data/`).
+3. Tiến hành huấn luyện:
+- Chạy lần lượt (Run All) các cell trong file `unet-novel.ipynb`.
+- Quá trình chạy sẽ tự động đọc dữ liệu NIfTI, thực hiện Data Augmentation từ thư viện MONAI, tính toán hàm Loss tùy chỉnh kết hợp (Dice Loss + CrossEntropy).
+- Các biểu đồ trực quan như Loss curve và Dice score sẽ được vẽ và hiển thị trực tiếp ra màn hình output của notebook theo từng Epoch (Cấu hình chuẩn từ báo cáo: Huấn luyện 100 Epochs, Batch size: 6 patches, Optimizer: AdamW, Learning Rate: 1e-4, Mixed Precision FP16).
+- Sau khi hoàn thành, trọng số của mô hình tốt nhất (best weights) sẽ được lưu trực tiếp vào thư mục `models/segmentation_module/model-weight/`.
+
+IV.2. Huấn luyện mô hình Sinh ảnh (Synthesis Module)
+Mô hình Sinh ảnh (Diffusion) được đặt tại thư mục `models/synthesis_module/` và được huấn luyện thông qua các file bash/python script chuyên dụng.
+1. Chuẩn bị Môi trường & Dữ liệu:
+- Môi trường: Đảm bảo đã kích hoạt môi trường ảo Python.
+- Dữ liệu BraTS2021: Mở terminal, đi tới thư mục module:
+    cd models/synthesis_module
+    Chạy lệnh để tiền xử lý và crop ảnh từ nguồn ban đầu vào thư mục chuẩn (dataset):
+    python prepare_brats_dataset.py --source /path/to/BRATS2021/source --output dataset --modalities t1,t1ce,t2,flair
+- Chia tập dữ liệu (Train/Val/Test): Sinh file config chia data (VD: brats_split.json) bằng hàm `make_split_case_lists` trong `dataset_brats.py`.
+
+2. Tiến hành Huấn luyện (Training):
+Hệ thống sử dụng 4 mô hình chuyên biệt để sinh từng loại ảnh bị khuyết. Huấn luyện tự động lần lượt cả 4 mô hình:
+    bash scripts/train_all_modalities.sh
+
+*Nếu muốn huấn luyện thủ công cho 1 loại ảnh (Ví dụ: huấn luyện tự động sinh ảnh T1 từ T1ce, T2, FLAIR):
+    python train_brats.py \
+      --task 3to1 \
+      --data_root dataset \
+      --cond_modalities "t1ce,t2,flair" \
+      --target_modality "t1" \
+      --epochs 50000 \
+      --batchsize 2 \
+      --save_and_sample_every 1000 \
+      --train_lr 2e-5 \
+      --with_condition
+
+3. Theo dõi quá trình (Monitoring):
+Mở một terminal mới và chạy lệnh TensorBoard để xem hàm Loss cũng như các mẫu ảnh (samples) được sinh ra qua từng chu kỳ:
+    tensorboard --logdir=results_brats/logs --port=6006
+    Truy cập trình duyệt web tại http://localhost:6006 để trực quan hóa.
+
+4. Lưu trữ và Tích hợp mô hình:
+- Trọng số mô hình (weights): Sẽ được lưu thành các file định dạng `.pt` (dung lượng ~500MB) tại thư mục `models/` của hệ thống huấn luyện.
+- Tích hợp: Sau khi đã có đầy đủ model trọng số của cả `segmentation_module` và `synthesis_module`, chỉ cần sao chép các file weights này vào đúng cấu trúc tương ứng trong project web (hoặc chỉnh sửa lại đường dẫn trong file `configs/pipeline_config.yaml`). Hệ thống web-server (FastAPI) sẽ tự động nạp toàn bộ các trọng số này để đưa ra dự đoán và phân tích lúc Inference.
+
+LƯU Ý THÊM: Nếu gặp lỗi hết bộ nhớ (CUDA Out of Memory) khi chạy Synthesis, chạy script với tùy chọn batch size nhỏ hơn (`--batchsize 1`) hoặc thu nhỏ kích thước không gian (`--input_size`).

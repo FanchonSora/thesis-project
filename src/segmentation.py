@@ -123,45 +123,128 @@ def run_segmentation(
     return pred
 
 def post_process(seg: np.ndarray, brain_mask: Optional[np.ndarray] = None, min_size: int = 100) -> np.ndarray:
+    """
+    Post-process segmentation predictions using morphological operations and connected component analysis.
+    
+    This function applies a series of refinement algorithms to clean up raw segmentation output:
+    - Remove false positives (noise fragments outside the main tumor)
+    - Smooth boundaries and fill internal holes
+    - Handle small/fragmented tumor regions
+    - Apply anatomical constraints (brain boundary mask)
+    
+    Args:
+        seg: Raw segmentation output from neural network (labels: 0=background, 1=necrotic core, 
+             2=edema, 3=enhancing tumor)
+        brain_mask: Binary brain mask to constrain output (optional)
+        min_size: Minimum voxel count for enhancing tumor regions (smaller regions are reclassified)
+    
+    Returns:
+        Refined segmentation prediction as uint8 array
+    """
     import scipy.ndimage as ndimage
     
     out = seg.copy()
 
-    # 1. Lọc nhiễu bên ngoài bằng Largest Connected Component (LCC) cho Whole Tumor (WT)
-    # Loại bỏ các mảnh vỡ nhỏ lẻ loi khỏi khối u chính.
-    wt_mask = out > 0
-    labeled_wt, num_features = ndimage.label(wt_mask)
+    # ============================================================================
+    # STEP 1: Largest Connected Component (LCC) filtering
+    # ============================================================================
+    # Purpose: Remove small false positive tumor fragments isolated from the main tumor mass
+    # This ensures we keep only the largest, most anatomically coherent tumor region
+    #
+    # Algorithm:
+    #   1. Create binary mask of all tumor voxels (any label > 0)
+    #   2. Label connected components in 3D space
+    #   3. Find the largest component by voxel count
+    #   4. Zero out all voxels not in the largest component
+    
+    wt_mask = out > 0  # Binary mask: tumor voxels (label 1, 2, or 3)
+    labeled_wt, num_features = ndimage.label(wt_mask)  # Label connected components
+    
     if num_features > 0:
+        # Calculate size of each connected component
         sizes = ndimage.sum(wt_mask, labeled_wt, range(1, num_features + 1))
         largest_component_id = np.argmax(sizes) + 1
-        # Set background for everything outside the largest WT mass
+        
+        # Keep only the largest component; remove noise fragments
         out[labeled_wt != largest_component_id] = 0
+        LOGGER.debug("[post] LCC filtering: kept largest tumor component (size=%d voxels), removed %d fragments",
+                     int(sizes[largest_component_id - 1]), num_features - 1)
 
-    # Cập nhật lại WT mask sau khi lọc
+    # Update WT mask after LCC filtering
     wt_mask = out > 0
 
-    # 2. Làm mịn biên và lấp lỗ hổng (Morphological Closing & Fill Holes)
-    # Khắc phục tình trạng "xấu", răng cưa và lỗ hổng bên trong của ảnh segmentation.
-    struct_elem = ndimage.generate_binary_structure(3, 1) # 3D cross structure
+    # ============================================================================
+    # STEP 2: Morphological smoothing and hole filling
+    # ============================================================================
+    # Purpose: Smooth jagged tumor boundaries and fill internal cavities/gaps
+    # This addresses neural network artifacts like discontinuous tumor regions or noisy edges
+    #
+    # Algorithm:
+    #   1. Binary closing: dilate then erode to close small gaps (erosion followed by dilation)
+    #   2. Fill holes: fill all internal cavities that don't connect to image boundary
+    #   3. Label newly filled voxels as Edema (label 2) by default
+    #
+    # Why Edema for filled regions:
+    # - Filled voxels are likely internal tumor structure, not air/necrosis
+    # - Edema is the surrounding infiltration zone, appropriate default label
+    
+    struct_elem = ndimage.generate_binary_structure(3, 1)  # 3D 6-connectivity (cross-shaped kernel)
     smoothed_wt = ndimage.binary_closing(wt_mask, structure=struct_elem, iterations=2)
     smoothed_wt = ndimage.binary_fill_holes(smoothed_wt)
     
-    # Những pixel được lấp đầy (hỗ hổng/lõm) sẽ được gán mặc định là vùng Edema (label 2)
+    # Identify newly filled voxels (those in smoothed mask but not in original)
     new_pixels = smoothed_wt & (~wt_mask)
-    out[new_pixels] = 2
+    out[new_pixels] = 2  # Assign filled voxels to Edema region
+    LOGGER.debug("[post] Morphological smoothing: filled %d voxels", int(new_pixels.sum()))
 
-    # 3. Xử lý các vùng Enhancing Tumor (ET - label 3) quá nhỏ
-    # Theo rule chuẩn của BraTS, nếu ET quá nhỏ (false positive), ta gán nó về Necrotic Core (label 1)
-    # thay vì xóa hẳn (biến thành background 0) gây rỗng khối u.
-    et_mask = out == 3
+    # ============================================================================
+    # STEP 3: Remove small enhancing tumor (ET) false positives
+    # ============================================================================
+    # Purpose: Filter out tiny ET fragments that are likely artifacts (neural network false positives)
+    # BraTS standard practice: very small ET regions are unrealistic and should be reclassified
+    #
+    # Algorithm:
+    #   1. Extract all Enhancing Tumor voxels (label 3)
+    #   2. Label connected components within ET mask
+    #   3. For each ET component smaller than min_size threshold:
+    #      - Reclassify as Necrotic Core (label 1) instead of deleting to background
+    #      - Rationale: small ET fragments likely represent unclear tumor boundaries,
+    #        not empty space; preserving as label 1 maintains tumor coherence
+    #
+    # Note: Using label 1 (necrotic core) preserves the tumor mass without artificial gaps
+    
+    et_mask = out == 3  # Extract enhancing tumor voxels
     labeled_et, num_et = ndimage.label(et_mask)
+    
     if num_et > 0:
-        for i in range(1, num_et + 1):
-            if int((labeled_et == i).sum()) < min_size:
-                out[labeled_et == i] = 1
+        et_sizes = ndimage.sum(et_mask, labeled_et, range(1, num_et + 1))
+        small_et_count = 0
+        
+        for component_id in range(1, num_et + 1):
+            component_size = int(et_sizes[component_id - 1])
+            
+            if component_size < min_size:
+                # Reclassify small ET fragment as Necrotic Core (label 1)
+                out[labeled_et == component_id] = 1
+                small_et_count += 1
+        
+        LOGGER.debug("[post] ET filtering: reclassified %d small ET components (threshold=%d voxels)",
+                     small_et_count, min_size)
 
-    # 4. Áp dụng Brain Mask (nếu có) để đảm bảo không lan ra ngoài não
+    # ============================================================================
+    # STEP 4: Apply brain mask constraint
+    # ============================================================================
+    # Purpose: Ensure segmentation stays within anatomical brain boundaries
+    # This prevents tumor predictions from leaking into skull/background regions
+    #
+    # Algorithm:
+    #   1. If brain mask is provided and matches segmentation shape:
+    #      - Zero out all segmentation voxels where brain_mask == 0
+    #      - This enforces anatomical constraint: no tumor outside brain tissue
+    
     if brain_mask is not None and brain_mask.shape == out.shape:
         out[brain_mask == 0] = 0
+        LOGGER.debug("[post] Applied brain mask: zeroed %d voxels outside brain",
+                     int((~brain_mask).sum()))
 
     return out.astype(np.uint8)
