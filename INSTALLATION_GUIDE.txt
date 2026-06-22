@@ -57,7 +57,8 @@ The Segmentation model (Enhanced UNet) is located at `models/segmentation_module
 - Ensure the Python environment has the `monai`, `torch`, `nibabel` libraries and other basic libraries listed in the first setup cell of the notebook.
 2. Data:
 - Open the file `models/segmentation_module/unet-novel.ipynb`.
-- Find the `TRAIN_DATASET_PATH` variable and change this path to point to the directory containing the extracted BraTS2021 dataset on your machine (e.g., `/path/to/BraTS2021_Training_Data/`).
+- Find the variable TRAIN_DATASET_PATH and update it to point to the extracted BraTS2021 dataset directory on your machine (e.g., /path/to/BraTS2021_Training_Data/).
+- You can find dataset BraTS 2021 on www.synapse.org - The RSNA-ASNR-MICCAI BraTS 2021 Challenge makes publicly available the largest and most diverse retrospective cohort of glioma patients. Ample manually-annotated multi-institutional routine clinically-acquired mpMRI scans of glioma are used as the training, validation, and testing data for this year’s BraTS challenge.
 3. Proceed with Training:
 - Run all cells (Run All) sequentially in the `unet-novel.ipynb` file.
 - The execution process will automatically read NIfTI data, perform Data Augmentation using the MONAI library, and calculate a custom combined Loss function (Dice Loss + CrossEntropy).
@@ -68,10 +69,11 @@ IV.2. Training the Synthesis Module (Diffusion)
 The Synthesis model (Diffusion) is located in the `models/synthesis_module/` directory and is trained via dedicated bash/python scripts.
 1. Environment & Data Preparation:
 - Environment: Ensure the Python virtual environment is activated.
-- BraTS2021 Data: Open the terminal, navigate to the module directory:
+- Navigate to the synthesis module directory:
     cd models/synthesis_module
-    Run the command to preprocess and crop images from the raw source into the standard dataset directory:
-    python prepare_brats_dataset.py --source /path/to/BRATS2021/source --output dataset --modalities t1,t1ce,t2,flair
+- You can find both datasets BraTS 2021 on www.synapse.org and BraTS 2023 on www.synapse.org - BraTS Challenge Series.
+- Run the preprocessing script to crop and prepare BraTS2021 and BraTS2023 data into the standard dataset directory:
+    python prepare_brats_dataset.py 
 - Split Dataset (Train/Val/Test): Generate the data split config file (e.g., brats_split.json) using the `make_split_case_lists` function in `dataset_brats.py`.
 
 2. Proceed with Training:

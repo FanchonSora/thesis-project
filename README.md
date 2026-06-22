@@ -116,14 +116,14 @@ The project consists of two independent model modules. For a complete Vietnamese
 
 ### 1. Segmentation Module (Enhanced UNet)
 The segmentation model is built using an Enhanced U-Net architecture. All training and evaluation logic is contained within Jupyter Notebooks located in `models/segmentation_module/`.
-- **Training**: Open and run the `unet-novel.ipynb` notebook. Ensure the `TRAIN_DATASET_PATH` is correctly configured to point to your BraTS2021 dataset. *Key parameters: 100 Epochs, Batch size 6, Optimizer AdamW, Learning Rate 1e-4, Mixed Precision FP16*.
+- **Training**: Open and run the `unet-novel.ipynb` notebook. Ensure the `TRAIN_DATASET_PATH` is correctly configured to point to your BraTS2021 dataset. You can find dataset BraTS 2021 on www.synapse.org - The RSNA-ASNR-MICCAI BraTS 2021 Challenge makes publicly available the largest and most diverse retrospective cohort of glioma patients. Ample manually-annotated multi-institutional routine clinically-acquired mpMRI scans of glioma are used as the training, validation, and testing data for this year’s BraTS challenge. *Key parameters: 100 Epochs, Batch size 6, Optimizer AdamW, Learning Rate 1e-4, Mixed Precision FP16*.
 - **Evaluation**: Use `unet-novel-eval.ipynb` to evaluate the trained model.
 - **Weights**: The trained model weights will be saved into `models/segmentation_module/model-weight/`.
 
 ### 2. Synthesis Module (Diffusion Models)
 The synthesis module uses conditioned Denoising Diffusion Probabilistic Models (DDPM) to synthesize missing MRI modalities.
 - Deep learning scripts, architectures, and data preparation tools for synthesis are stored in `models/synthesis_module/`. *Key parameters: 50,000 Epochs, Batch size 2, Optimizer Adam, Learning Rate 2e-5, Save & Sample every 1000 steps*.
-- Refer to the [**TRAINING_WORKFLOW.md**](TRAINING_WORKFLOW.md) for a comprehensive A-Z guide on setting up the BraTS dataset, configuring hyperparameters, and executing the `train_brats.py` or `train_all_modalities.sh` script for all diffusion models.
+- Refer to the [**TRAINING_WORKFLOW.md**](TRAINING_WORKFLOW.md) for a comprehensive A-Z guide on setting up the BraTS datasets, configuring hyperparameters, and executing the `train_brats.py` or `train_all_modalities.sh` script for all diffusion models. You can find both datasets BraTS 2021 on www.synapse.org and BraTS 2023 on www.synapse.org - BraTS Challenge Series.
 
 ---
 
